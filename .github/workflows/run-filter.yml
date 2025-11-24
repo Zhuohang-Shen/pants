@@ -1,0 +1,38 @@
+name: Trigger Continuous Analysis Violation Filter
+
+on:
+  workflow_dispatch:
+    inputs:
+      current_commit:
+        description: 'Current commit SHA to test'
+        required: true
+        type: string
+      previous_commit:
+        description: 'Previous commit SHA to test'
+        required: false
+        type: string
+      dispatch_id:
+        description: "Unique id from dispatcher for history runnings"
+        required: false
+        type: string
+      skip_commits_pattern:
+        description: "Number of commits to skip between processing (skip x commits pattern)"
+        required: false
+        type: number
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+jobs:
+  analyze-single-commit:
+    uses: ContinuousAnalysis/continuous-analysis/.github/workflows/auto-filter.yml@main
+    with:
+      project: ${{ github.repository }}
+      current_commit: ${{ inputs.current_commit }}
+      previous_commit: ${{ inputs.previous_commit }}
+      dispatch_id: ${{ inputs.dispatch_id }}
+      skip_commits_pattern: ${{ inputs.skip_commits_pattern }}
+    secrets:
+      ORG_WIDE_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
