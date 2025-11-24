@@ -1,0 +1,28 @@
+name: Trigger Continuous Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Single commit SHA to test'
+        required: true
+        type: string
+      dispatch_id:
+        description: "Unique id from dispatcher for history runnings"
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+
+jobs:
+  analyze-single-commit:
+    uses: ContinuousAnalysis/continuous-analysis/.github/workflows/auto-runner.yml@main
+    with:
+      project: ${{ github.repository }}
+      commit: ${{ inputs.commit }}
+      dispatch_id: ${{ inputs.dispatch_id }}
+    secrets:
+      ORG_WIDE_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
