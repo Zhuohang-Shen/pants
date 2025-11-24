@@ -1,0 +1,49 @@
+name: Set Cache SHA
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to set in cache"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  set-cache-sha:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate and set commit SHA
+        run: |
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          
+          # Validate format
+          if [[ ! "$COMMIT_SHA" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "Invalid commit SHA format"
+            exit 1
+          fi
+          
+          # Create cache directory and set SHA
+          mkdir -p .continuous-analysis-cache
+          echo "$COMMIT_SHA" > .continuous-analysis-cache/last_sha.txt
+          
+          echo "Set cache SHA: $COMMIT_SHA"
+
+      - name: Generate timestamp
+        id: timestamp
+        run: |
+          ts=$(date +'%Y%m%d-%H%M')
+          echo "ts=$ts" >> "$GITHUB_OUTPUT"
+          echo "Generated timestamp: $ts"
+
+      - name: Save updated SHA cache with timestamp
+        uses: actions/cache/save@v4
+        with:
+          path: .continuous-analysis-cache
+          key: continuous-analysis-cache-${{ github.repository }}-${{ steps.timestamp.outputs.ts }}
