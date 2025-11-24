@@ -1,0 +1,300 @@
+name: Monitor Upstream Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      number_of_commits:
+        description: "Historical mode: analyze N previous commits (0 = continuous mode)"
+        required: true
+        type: number
+      skip_commits:
+        description: "Skip commit pattern: process every (N+1)th commit (0 = process all)"
+        required: false
+        type: number
+        default: 0
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+jobs:
+  monitor-upstream:
+    runs-on: ubuntu-latest
+
+    env:
+      # NEED TO BE CONFIGURED EACH PROJECT
+      UPSTREAM_REPO: "pantsbuild/pants"
+      BRANCH: "main"
+      RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
+      MAX_CONCURRENT: 9
+
+    steps:
+      # --------------------------------------------------------------------
+      # STEP 1 — COMPUTE LAST-SEEN SHA BASED ON NUMBER OF COMMITS
+      # --------------------------------------------------------------------
+      - name: Determine last-seen SHA
+        id: last-sha
+        run: |
+          # Set error handling
+          set -euo pipefail
+
+          # Get the number of commits to analyze
+          NUMBER_OF_COMMITS="${{ inputs.number_of_commits }}"
+          echo "Historical mode: computing boundary SHA for ${NUMBER_OF_COMMITS} commits."
+
+          # Clone the upstream repository
+          git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+          cd upstream-repo
+          git checkout "${BRANCH}"
+          git rev-list --first-parent "${BRANCH}" > ../linear_commits.txt
+          cd ..
+          rm -rf upstream-repo
+
+          # Get the total number of commits in the first-parent history
+          TOTAL=$(wc -l < linear_commits.txt)
+          echo "Total commits in first-parent history: $TOTAL"
+
+          # Check if the number of commits to analyze is greater than 0
+          if [[ "$NUMBER_OF_COMMITS" -le 0 ]]; then
+            echo "ERROR: number_of_commits $NUMBER_OF_COMMITS is less than or equal to 0." >&2
+            exit 1
+          fi
+
+          # Check if the number of commits to analyze exceeds the total number of commits in the first-parent history
+          if [[ "$NUMBER_OF_COMMITS" -ge "$TOTAL" ]]; then
+            echo "ERROR: number_of_commits $NUMBER_OF_COMMITS exceeds available history ($TOTAL)." >&2
+            exit 1
+          fi
+
+          # Extract the last seen SHA based on the number of commits to analyze
+          LAST_SHA=$(sed -n "$((NUMBER_OF_COMMITS + 1))p" linear_commits.txt)
+          echo "Historical boundary last_sha = $LAST_SHA"
+          echo "last_sha=$LAST_SHA" >> $GITHUB_OUTPUT
+
+      # --------------------------------------------------------------------
+      # STEP 2 — FETCH COMMIT HISTORY & COMPUTE NEW COMMITS
+      # --------------------------------------------------------------------
+      - name: Fetch first-parent commit history
+        id: check-commits
+        run: |
+          echo "Fetching upstream first-parent history..."
+
+          git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+          cd upstream-repo
+          git checkout "${BRANCH}"
+          git rev-list --first-parent "${BRANCH}" > ../all_commits.txt
+          cd ..
+          rm -rf upstream-repo
+
+          echo "Total first-parent commits: $(wc -l < all_commits.txt)"
+
+          LAST_SEEN="${{ steps.last-sha.outputs.last_sha }}"
+          SKIP_COMMITS="${{ inputs.skip_commits }}"
+
+          [[ -z "$SKIP_COMMITS" || "$SKIP_COMMITS" -lt 0 ]] && SKIP_COMMITS=0
+
+          # Extract new commits above LAST_SEEN
+          awk -v sha="$LAST_SEEN" '$0 ~ sha {exit} {print}' all_commits.txt > temp_new_commits.txt
+
+          # Apply skip pattern if skip_commits is provided
+          if [[ "$SKIP_COMMITS" -eq 0 ]]; then
+            mv temp_new_commits.txt new_commits.txt
+          else
+            awk "NR % ($SKIP_COMMITS + 1) == 1" temp_new_commits.txt > new_commits.txt
+            rm temp_new_commits.txt
+          fi
+
+          # Print the new commits to be analyzed
+          echo "New commits to be analyzed (total: $(wc -l < new_commits.txt)):"
+          cat new_commits.txt
+
+      # --------------------------------------------------------------------
+      # STEP 3 — GENERATE DISPATCH ID
+      # --------------------------------------------------------------------
+      - name: Generate dispatch ID
+        id: dispatch-id
+        run: |
+          dispatch_id="$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+          echo "Dispatch ID: $dispatch_id"
+          echo "dispatch_id=$dispatch_id" >> $GITHUB_OUTPUT
+
+      # --------------------------------------------------------------------
+      # STEP 4 — RUN ANALYSIS (PARALLEL) AND COLLECT ARTIFACTS
+      # --------------------------------------------------------------------
+      - name: Run analysis workflows (parallel) and collect artifacts
+        id: run-analysis
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t commits < new_commits.txt
+          dispatch_id="${{ steps.dispatch-id.outputs.dispatch_id }}"
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
+          total_commits=${#commits[@]}
+
+          echo "Launching analysis for ${total_commits} commits..."
+          echo "" > all_expected_artifacts.txt   # all expected artifacts saved here
+
+          # ----------------------------------------
+          # DISPATCH ANALYSIS WORKFLOWS IN BATCHES
+          # ----------------------------------------
+          for ((batch_start=0; batch_start<total_commits; batch_start+=MAX_CONCURRENT)); do
+            batch_end=$((batch_start + MAX_CONCURRENT))
+            ((batch_end > total_commits)) && batch_end=$total_commits
+
+            echo "Processing batch $((batch_start/MAX_CONCURRENT + 1))..."
+
+            declare -a dispatched_commits=()
+            declare -a artifact_names=()
+
+            # Dispatch each workflow in this batch
+            for ((i=batch_start; i<batch_end; i++)); do
+              commit="${commits[$i]}"
+              echo "  Dispatching commit: $commit"
+
+              artifact_name="continuous-analysis-history-results-${dispatch_id}-${repo_name}-${commit}"
+
+              # Remember all artifact names for final release step
+              echo "$artifact_name" >> all_expected_artifacts.txt
+
+              gh workflow run run-analysis.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field commit="$commit" \
+                --field dispatch_id="$dispatch_id"
+
+              dispatched_commits+=("$commit")
+              artifact_names+=("$artifact_name")
+            done
+
+            # -----------------------------
+            # WAIT FOR THIS BATCH TO FINISH
+            # -----------------------------
+            echo "Waiting for batch artifacts..."
+
+            end_time=$(( $(date +%s) + RUNNER_DISPATCH_TIMEOUT ))
+            declare -a done=()
+
+            while [[ ${#done[@]} -lt ${#dispatched_commits[@]} && $(date +%s) -lt $end_time ]]; do
+              artifact_list=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+
+              for idx in "${!artifact_names[@]}"; do
+                if [[ " ${done[@]} " =~ " ${artifact_names[$idx]} " ]]; then continue; fi
+                if echo "$artifact_list" | grep -q "^${artifact_names[$idx]}$"; then
+                  echo "  ✓ Artifact found: ${artifact_names[$idx]}"
+                  done+=("${artifact_names[$idx]}")
+                fi
+              done
+
+              [[ ${#done[@]} -lt ${#artifact_names[@]} ]] && sleep 60
+            done
+
+            if [[ ${#done[@]} -lt ${#artifact_names[@]} ]]; then
+              echo "ERROR: Timeout while waiting for batch artifacts."
+              exit 1
+            fi
+
+            echo "Batch completed."
+          done
+
+          echo "All analysis workflows completed."
+
+      # --------------------------------------------------------------------
+      # STEP 5 — CREATE ONE RELEASE AND UPLOAD ALL ARTIFACTS
+      # --------------------------------------------------------------------
+      - name: Create release and upload artifacts
+        id: make-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Helper function to fetch all artifacts across all pages
+          fetch_all_artifacts() {
+            local page=1
+            local all_artifacts_array="[]"
+            while true; do
+              local response=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100&page=${page}")
+              local page_artifacts=$(echo "$response" | jq -c '.artifacts[]')
+              if [[ -z "$page_artifacts" ]]; then
+                break
+              fi
+              # Merge this page's artifacts into the array
+              while IFS= read -r artifact; do
+                all_artifacts_array=$(echo "$all_artifacts_array" | jq --argjson art "$artifact" '. + [$art]')
+              done <<< "$page_artifacts"
+              local per_page=$(echo "$response" | jq -r '.artifacts | length')
+              if [[ $per_page -lt 100 ]]; then
+                break
+              fi
+              ((page++))
+            done
+            echo "$all_artifacts_array"
+          }
+
+          # Release naming (one release per workflow run)
+          run_timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          release_tag="analysis-${run_timestamp}"
+          release_name="Continuous Analysis Run ${run_timestamp}"
+
+          echo "Creating release: $release_name"
+
+          # Create release
+          api_response=$(curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"${release_tag}\", \"name\": \"${release_name}\", \"draft\": false, \"prerelease\": false}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases")
+
+          upload_url=$(echo "$api_response" | jq -r '.upload_url' | sed 's/{?name,label}//')
+
+          echo "Upload URL: $upload_url"
+
+          echo "Fetching all artifacts (this may take a moment for large runs)..."
+          all_artifacts_data=$(fetch_all_artifacts)
+
+          echo "Uploading artifacts..."
+
+          # For each expected artifact, download it & upload it
+          while IFS= read -r artifact_name; do
+            echo "  Processing artifact: $artifact_name"
+
+            # Query artifact metadata from the fetched data
+            artifact_info=$(echo "$all_artifacts_data" | jq -c --arg NAME "$artifact_name" '[.[] | select(.name == $NAME)][0]')
+
+            if [[ -z "$artifact_info" || "$artifact_info" == "null" ]]; then
+              echo "  WARNING: Artifact not found: $artifact_name"
+              continue
+            fi
+
+            artifact_id=$(echo "$artifact_info" | jq -r '.id')
+            zip_name="${artifact_name}.zip"
+
+            echo "  Downloading artifact ID $artifact_id --> $zip_name"
+
+            # Download ZIP
+            curl -L -s \
+              -H "Authorization: token $GH_TOKEN" \
+              -o "$zip_name" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip"
+
+            echo "  Uploading $zip_name to release..."
+
+            # Upload ZIP to release
+            curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/zip" \
+              --data-binary @"$zip_name" \
+              "${upload_url}?name=${zip_name}"
+
+            echo "  ✓ Uploaded: $zip_name"
+
+          done < all_expected_artifacts.txt
+
+          echo "Release completed successfully."
