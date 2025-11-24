@@ -1,0 +1,367 @@
+name: Monitor Upstream and Run Analysis
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      number_of_commits:
+        description: "Historical mode: analyze N previous commits (0 = continuous mode)"
+        required: false
+        type: number
+        default: 0
+      skip_commits:
+        description: "Skip commit pattern: process every (N+1)th commit (0 = process all)"
+        required: false
+        type: number
+        default: 0
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+jobs:
+  monitor-upstream:
+    runs-on: ubuntu-latest
+
+    env:
+      # NEED TO BE CONFIGURED EACH PROJECT
+      UPSTREAM_REPO: "pantsbuild/pants"
+      BRANCH: "main"
+      RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
+      FILTER_DISPATCH_TIMEOUT: 1800 # 30 minutes
+      MAX_CONCURRENT: 8
+
+    steps:
+      # --------------------------------------------------------------------
+      # STEP 1 — SYNC FORK WITH UPSTREAM
+      # --------------------------------------------------------------------
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_WIDE_TOKEN }}
+          path: forked-repo
+          fetch-depth: 0
+
+      - name: Sync fork with upstream
+        run: |
+          set -euo pipefail
+          cd forked-repo
+
+          echo "Syncing ${BRANCH} with upstream ${UPSTREAM_REPO}..."
+
+          git config --global --add safe.directory "$PWD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch --prune origin
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" || true
+          git fetch --prune upstream --tags
+
+          git checkout "${BRANCH}"
+
+          echo "Rebasing local branch onto upstream/${BRANCH}..."
+          if ! git rebase -X theirs --rebase-merges "upstream/${BRANCH}"; then
+            echo "Rebase failed -- aborting."
+            git rebase --abort || true
+            exit 1
+          fi
+
+          if ! git diff --quiet "origin/${BRANCH}..HEAD"; then
+            git push --force-with-lease origin "${BRANCH}"
+            echo "Rebase changes pushed to origin."
+          else
+            echo "No diverged changes; nothing to push."
+          fi
+
+          cd ..
+
+      - name: Cleanup forked repo
+        run: rm -rf forked-repo
+
+      # --------------------------------------------------------------------
+      # STEP 2 — LOAD LAST-SEEN SHA (or compute from history)
+      # --------------------------------------------------------------------
+      - name: Restore analysis cache folder
+        id: cache-folder
+        uses: actions/cache/restore@v4
+        with:
+          path: .continuous-analysis-cache
+          key: continuous-analysis-cache-${{ github.repository }}-
+
+      - name: Ensure cache folder exists
+        run: mkdir -p .continuous-analysis-cache
+
+      - name: Determine last-seen SHA
+        id: last-sha
+        run: |
+          NUMBER_OF_COMMITS="${{ inputs.number_of_commits }}"
+
+          # ---------------------------
+          # Historical mode
+          # ---------------------------
+          if [[ "$NUMBER_OF_COMMITS" -gt 0 ]]; then
+            echo "Historical mode: computing boundary SHA for ${NUMBER_OF_COMMITS} commits."
+
+            git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+            cd upstream-repo
+            git checkout "${BRANCH}"
+            git rev-list --first-parent "${BRANCH}" > ../linear_commits.txt
+            cd ..
+            rm -rf upstream-repo
+
+            TOTAL=$(wc -l < linear_commits.txt)
+            echo "Total commits in first-parent history: $TOTAL"
+
+            if [[ "$NUMBER_OF_COMMITS" -ge "$TOTAL" ]]; then
+              echo "ERROR: number_of_commits $NUMBER_OF_COMMITS exceeds available history ($TOTAL)." >&2
+              exit 1
+            fi
+
+            LAST_SHA=$(sed -n "$((NUMBER_OF_COMMITS + 1))p" linear_commits.txt)
+            echo "Historical boundary last_sha = $LAST_SHA"
+            echo "last_sha=$LAST_SHA" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # ---------------------------
+          # Continuous mode
+          # ---------------------------
+          CACHE_FILE=".continuous-analysis-cache/last_sha.txt"
+
+          if [[ -f "$CACHE_FILE" ]]; then
+            LAST_SHA=$(cat "$CACHE_FILE")
+            echo "Loaded last-seen SHA from cache: $LAST_SHA"
+          else
+            LAST_SHA=""
+            echo "No last-seen SHA found; this is the first run."
+          fi
+
+          echo "last_sha=$LAST_SHA" >> $GITHUB_OUTPUT
+
+      # --------------------------------------------------------------------
+      # STEP 3 — FETCH COMMIT HISTORY & COMPUTE NEW COMMITS
+      # --------------------------------------------------------------------
+      - name: Fetch first-parent commit history
+        id: check-commits
+        run: |
+          echo "Fetching upstream first-parent history..."
+
+          git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+          cd upstream-repo
+          git checkout "${BRANCH}"
+          git rev-list --first-parent "${BRANCH}" > ../all_commits.txt
+          cd ..
+          rm -rf upstream-repo
+
+          echo "Total first-parent commits: $(wc -l < all_commits.txt)"
+
+          LAST_SEEN="${{ steps.last-sha.outputs.last_sha }}"
+          SKIP_COMMITS="${{ inputs.skip_commits }}"
+
+          [[ -z "$SKIP_COMMITS" || "$SKIP_COMMITS" -lt 0 ]] && SKIP_COMMITS=0
+
+          # First-time run
+          if [[ -z "$LAST_SEEN" ]]; then
+            head -n 1 all_commits.txt > new_commits.txt
+            echo "Initial run: analyzing latest commit only: $(cat new_commits.txt)"
+            echo "has_new_commits=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Extract new commits above LAST_SEEN
+          awk -v sha="$LAST_SEEN" '$0 ~ sha {exit} {print}' all_commits.txt > temp_new_commits.txt
+
+          if [[ ! -s temp_new_commits.txt ]]; then
+            echo "No new commits since last analysis."
+            touch new_commits.txt
+            echo "has_new_commits=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Apply skip pattern
+          if [[ "$SKIP_COMMITS" -eq 0 ]]; then
+            mv temp_new_commits.txt new_commits.txt
+          else
+            awk "NR % ($SKIP_COMMITS + 1) == 1" temp_new_commits.txt > new_commits.txt
+            rm temp_new_commits.txt
+          fi
+
+          echo "has_new_commits=true" >> $GITHUB_OUTPUT
+          echo "New commits to analyze (total: $(wc -l < new_commits.txt)):"
+          cat new_commits.txt
+
+      # --------------------------------------------------------------------
+      # STEP 4 — GENERATE DISPATCH ID (ONLY FOR HISTORICAL MODE)
+      # --------------------------------------------------------------------
+      - name: Generate dispatch ID
+        id: dispatch-id
+        run: |
+          if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
+            dispatch_id="$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+            echo "Historical run dispatch ID: $dispatch_id"
+            echo "dispatch_id=$dispatch_id" >> $GITHUB_OUTPUT
+          else
+            echo "dispatch_id=" >> $GITHUB_OUTPUT
+          fi
+
+      # --------------------------------------------------------------------
+      # STEP 5 — TRIGGER ANALYSIS WORKFLOWS (PARALLEL)
+      # --------------------------------------------------------------------
+      - name: Run analysis workflows
+        if: steps.check-commits.outputs.has_new_commits == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mapfile -t commits < new_commits.txt
+          dispatch_id="${{ steps.dispatch-id.outputs.dispatch_id }}"
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+
+          MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
+          total_commits=${#commits[@]}
+
+          echo "Launching analysis for ${total_commits} commits..."
+
+          for ((batch_start=0; batch_start<total_commits; batch_start+=MAX_CONCURRENT)); do
+            batch_end=$((batch_start + MAX_CONCURRENT))
+            ((batch_end > total_commits)) && batch_end=$total_commits
+
+            echo "Processing batch $((batch_start/MAX_CONCURRENT + 1))..."
+
+            declare -a dispatched_commits=()
+            declare -a artifact_names=()
+
+            for ((i=batch_start; i<batch_end; i++)); do
+              commit="${commits[$i]}"
+              echo "  Dispatching commit $commit"
+
+              if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
+                artifact="continuous-analysis-history-results-${dispatch_id}-${repo_name}-${commit}"
+              else
+                artifact="continuous-analysis-results-${repo_name}-${commit}"
+              fi
+
+              gh workflow run run-analysis.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field commit="$commit" \
+                --field dispatch_id="$dispatch_id"
+
+              dispatched_commits+=("$commit")
+              artifact_names+=("$artifact")
+            done
+
+            echo "Waiting for batch artifacts..."
+
+            end_time=$(( $(date +%s) + RUNNER_DISPATCH_TIMEOUT ))
+            declare -a done=()
+
+            while [[ ${#done[@]} -lt ${#dispatched_commits[@]} && $(date +%s) -lt $end_time ]]; do
+              names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+
+              for idx in "${!dispatched_commits[@]}"; do
+                if [[ " ${done[@]} " =~ " ${dispatched_commits[$idx]} " ]]; then continue; fi
+                if echo "$names" | grep -q "^${artifact_names[$idx]}"; then
+                  echo "  ✓ Artifact found: ${artifact_names[$idx]}"
+                  done+=("${dispatched_commits[$idx]}")
+                fi
+              done
+
+              [[ ${#done[@]} -lt ${#dispatched_commits[@]} ]] && sleep 60
+            done
+
+            if [[ ${#done[@]} -lt ${#dispatched_commits[@]} ]]; then
+              echo "ERROR: Timeout waiting for batch artifacts."
+              exit 1
+            fi
+
+            echo "Batch completed."
+          done
+
+      # --------------------------------------------------------------------
+      # STEP 6 — TRIGGER FILTER WORKFLOWS (IN SEQUENCE)
+      # --------------------------------------------------------------------
+      - name: Run violation filter workflows
+        if: steps.check-commits.outputs.has_new_commits == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mapfile -t commits < new_commits.txt
+          dispatch_id="${{ steps.dispatch-id.outputs.dispatch_id }}"
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+
+          echo "Executing violation filtering sequentially..."
+
+          reversed=()
+          for ((i=${#commits[@]}-1; i>=0; i--)); do
+            reversed+=("${commits[$i]}")
+          done
+
+          for i in "${!reversed[@]}"; do
+            current="${reversed[$i]}"
+            previous=""
+            ((i > 0)) && previous="${reversed[$i-1]}"
+
+            echo "Filtering: $current (prev: $previous)"
+
+            if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
+              artifact="continuous-analysis-history-filtered-results-${dispatch_id}-${repo_name}-${current}-${{ inputs.skip_commits }}"
+            else
+              artifact="continuous-analysis-filtered-results-${repo_name}-${current}"
+            fi
+
+            gh workflow run run-filter.yml \
+              --repo "${GITHUB_REPOSITORY}" \
+              --ref "${BRANCH}" \
+              --field current_commit="$current" \
+              --field previous_commit="$previous" \
+              --field dispatch_id="$dispatch_id" \
+              --field skip_commits_pattern="${{ inputs.skip_commits }}"
+
+            end_time=$(( $(date +%s) + FILTER_DISPATCH_TIMEOUT ))
+            created=false
+
+            while ! $created && [[ $(date +%s) -lt $end_time ]]; do
+              names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+              if echo "$names" | grep -q "^${artifact}"; then
+                echo "  ✓ Filter artifact: ${artifact}"
+                created=true
+                break
+              fi
+              sleep 30
+            done
+
+            if ! $created; then
+              echo "ERROR: Timeout waiting for filter artifact: ${artifact}"
+              exit 1
+            fi
+          done
+
+      # --------------------------------------------------------------------
+      # STEP 7 — UPDATE SHA CACHE (Continuous mode only)
+      # --------------------------------------------------------------------
+      - name: Update last-seen SHA cache
+        if: steps.check-commits.outputs.has_new_commits == 'true' && inputs.number_of_commits == 0
+        run: |
+          NEWEST=$(head -n 1 new_commits.txt)
+          echo "$NEWEST" > .continuous-analysis-cache/last_sha.txt
+          echo "Updated cache: last_sha = $NEWEST"
+
+      - name: Generate timestamp
+        if: steps.check-commits.outputs.has_new_commits == 'true' && inputs.number_of_commits == 0
+        id: timestamp
+        run: |
+          ts=$(date +'%Y%m%d-%H%M')
+          echo "ts=$ts" >> "$GITHUB_OUTPUT"
+
+      - name: Save updated cache
+        if: steps.check-commits.outputs.has_new_commits == 'true' && inputs.number_of_commits == 0
+        uses: actions/cache/save@v4
+        with:
+          path: .continuous-analysis-cache
+          key: continuous-analysis-cache-${{ github.repository }}-${{ steps.timestamp.outputs.ts }}
