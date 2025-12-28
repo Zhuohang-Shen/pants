@@ -31,7 +31,7 @@ jobs:
       BRANCH: "main"
       RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
       FILTER_DISPATCH_TIMEOUT: 1800 # 30 minutes
-      MAX_CONCURRENT: 1
+      MAX_CONCURRENT: 8
 
     steps:
       # --------------------------------------------------------------------
@@ -104,10 +104,11 @@ jobs:
           if [[ "$NUMBER_OF_COMMITS" -gt 0 ]]; then
             echo "Historical mode: computing boundary SHA for ${NUMBER_OF_COMMITS} commits."
 
-            git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+            # Clone the upstream repository
+            git clone "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
             cd upstream-repo
             git checkout "${BRANCH}"
-            git rev-list --first-parent "${BRANCH}" > ../linear_commits.txt
+            git log --no-merges --name-status | grep 'py\|^commit' | grep -B1 'py$' | grep ^commit | cut -d ' ' -f 2 > ../linear_commits.txt
             cd ..
             rm -rf upstream-repo
 
@@ -143,19 +144,19 @@ jobs:
       # --------------------------------------------------------------------
       # STEP 3 — FETCH COMMIT HISTORY & COMPUTE NEW COMMITS
       # --------------------------------------------------------------------
-      - name: Fetch first-parent commit history
+      - name: Fetch commit history with python files changed and no merge commits
         id: check-commits
         run: |
-          echo "Fetching upstream first-parent history..."
+          echo "Fetching upstream commit history with python files changed and no merge commits..."
 
-          git clone --depth=100000 "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
+          git clone "https://github.com/${UPSTREAM_REPO}.git" upstream-repo
           cd upstream-repo
           git checkout "${BRANCH}"
-          git rev-list --first-parent "${BRANCH}" > ../all_commits.txt
+          git log --no-merges --name-status | grep 'py\|^commit' | grep -B1 'py$' | grep ^commit | cut -d ' ' -f 2 > ../all_commits.txt
           cd ..
           rm -rf upstream-repo
 
-          echo "Total first-parent commits: $(wc -l < all_commits.txt)"
+          echo "Total commits with python files changed and no merge commits: $(wc -l < all_commits.txt)"
 
           LAST_SEEN="${{ steps.last-sha.outputs.last_sha }}"
           SKIP_COMMITS="${{ inputs.skip_commits }}"
@@ -221,27 +222,75 @@ jobs:
           MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
           total_commits=${#commits[@]}
 
-          echo "Launching analysis for ${total_commits} commits..."
+          echo "Checking ${total_commits} commits for existing artifacts..."
 
-          for ((batch_start=0; batch_start<total_commits; batch_start+=MAX_CONCURRENT)); do
+          # First pass: check all commits and collect those that need processing
+          declare -a commits_to_process=()
+          declare -a artifacts_to_process=()
+
+          for commit in "${commits[@]}"; do
+            if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
+              artifact="continuous-analysis-history-results-${dispatch_id}-${repo_name}-${commit}"
+            else
+              artifact="continuous-analysis-results-${repo_name}-${commit}"
+            fi
+
+            # Check if artifact already exists (check all pages)
+            artifact_exists=false
+            page=1
+            per_page=100
+            
+            while true; do
+              response=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=${per_page}&page=${page}")
+              
+              artifact_names=$(echo "$response" | jq -r '.artifacts[].name')
+              
+              if echo "$artifact_names" | grep -q "^${artifact}"; then
+                artifact_exists=true
+                break
+              fi
+              
+              # Check if there are more pages
+              if [[ -z "$artifact_names" ]] || [[ $(echo "$artifact_names" | wc -l) -lt $per_page ]]; then
+                break
+              fi
+              
+              page=$((page + 1))
+            done
+
+            if $artifact_exists; then
+              echo " ✓ Artifact already exists: ${artifact} - will skip"
+            else
+              echo " ✗ Artifact missing: ${artifact} - will dispatch"
+              commits_to_process+=("$commit")
+              artifacts_to_process+=("$artifact")
+            fi
+          done
+
+          total_to_process=${#commits_to_process[@]}
+          if [[ $total_to_process -eq 0 ]]; then
+            echo "All commits already processed. Nothing to dispatch."
+            exit 0
+          else
+            echo "Launching analysis for ${total_to_process} commits (${total_commits} total, $((total_commits - total_to_process)) already processed)..."
+          fi
+
+          # Second pass: batch and dispatch only commits that need processing
+          for ((batch_start=0; batch_start<total_to_process; batch_start+=MAX_CONCURRENT)); do
             batch_end=$((batch_start + MAX_CONCURRENT))
-            ((batch_end > total_commits)) && batch_end=$total_commits
+            ((batch_end > total_to_process)) && batch_end=$total_to_process
 
             echo "Processing batch $((batch_start/MAX_CONCURRENT + 1))..."
 
             declare -a dispatched_commits=()
-            declare -a artifact_names=()
+            declare -a dispatched_artifacts=()
 
             for ((i=batch_start; i<batch_end; i++)); do
-              commit="${commits[$i]}"
+              commit="${commits_to_process[$i]}"
+              artifact="${artifacts_to_process[$i]}"
+              
               echo "  Dispatching commit $commit"
-
-              if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
-                artifact="continuous-analysis-history-results-${dispatch_id}-${repo_name}-${commit}"
-              else
-                artifact="continuous-analysis-results-${repo_name}-${commit}"
-              fi
-
               gh workflow run run-analysis.yml \
                 --repo "${GITHUB_REPOSITORY}" \
                 --ref "${BRANCH}" \
@@ -249,7 +298,7 @@ jobs:
                 --field dispatch_id="$dispatch_id"
 
               dispatched_commits+=("$commit")
-              artifact_names+=("$artifact")
+              dispatched_artifacts+=("$artifact")
             done
 
             echo "Waiting for batch artifacts..."
@@ -264,8 +313,8 @@ jobs:
 
               for idx in "${!dispatched_commits[@]}"; do
                 if [[ " ${done[@]} " =~ " ${dispatched_commits[$idx]} " ]]; then continue; fi
-                if echo "$names" | grep -q "^${artifact_names[$idx]}"; then
-                  echo "  ✓ Artifact found: ${artifact_names[$idx]}"
+                if echo "$names" | grep -q "^${dispatched_artifacts[$idx]}"; then
+                  echo "  ✓ Artifact found: ${dispatched_artifacts[$idx]}"
                   done+=("${dispatched_commits[$idx]}")
                 fi
               done
@@ -300,10 +349,15 @@ jobs:
             reversed+=("${commits[$i]}")
           done
 
+          LAST_SEEN="${{ steps.last-sha.outputs.last_sha }}"
+
           for i in "${!reversed[@]}"; do
             current="${reversed[$i]}"
-            previous=""
-            ((i > 0)) && previous="${reversed[$i-1]}"
+            if [[ $i -eq 0 ]]; then
+              previous="$LAST_SEEN"
+            else
+              previous="${reversed[$i-1]}"
+            fi
 
             echo "Filtering: $current (prev: $previous)"
 
