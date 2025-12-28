@@ -31,7 +31,7 @@ jobs:
       BRANCH: "main"
       RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
       FILTER_DISPATCH_TIMEOUT: 1800 # 30 minutes
-      MAX_CONCURRENT: 8
+      MAX_CONCURRENT: 1
 
     steps:
       # --------------------------------------------------------------------
@@ -364,7 +364,7 @@ jobs:
             if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
               artifact="continuous-analysis-history-filtered-results-${dispatch_id}-${repo_name}-${current}-${{ inputs.skip_commits }}"
             else
-              artifact="continuous-analysis-filtered-results-${repo_name}-${current}"
+              artifact="continuous-analysis-future-filtered-results-${repo_name}-${current}"
             fi
 
             gh workflow run run-filter.yml \
