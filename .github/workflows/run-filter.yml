@@ -11,10 +11,16 @@ on:
         description: 'Previous commit SHA to test'
         required: false
         type: string
-      dispatch_id:
-        description: "Unique id from dispatcher for history runnings"
+      dispatch_type:
+        description: "Type of dispatch: history or prs (empty for continuous mode)"
         required: false
         type: string
+        default: ""
+      dispatch_id:
+        description: "Unique id from dispatcher for history / PR runnings"
+        required: false
+        type: string
+        default: ""
       skip_commits_pattern:
         description: "Number of commits to skip between processing (skip x commits pattern)"
         required: false
@@ -32,6 +38,7 @@ jobs:
       project: ${{ github.repository }}
       current_commit: ${{ inputs.current_commit }}
       previous_commit: ${{ inputs.previous_commit }}
+      dispatch_type: ${{ inputs.dispatch_type }}
       dispatch_id: ${{ inputs.dispatch_id }}
       skip_commits_pattern: ${{ inputs.skip_commits_pattern }}
     secrets:
