@@ -1,0 +1,368 @@
+name: Monitor Open PRs and Run Analysis
+
+on:
+  schedule:
+    - cron: "30 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: read
+
+# NEED TO BE CONFIGURED EACH PROJECT
+env:
+  UPSTREAM_REPO: "pantsbuild/pants"
+  BRANCH: "main"
+  RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
+  FILTER_DISPATCH_TIMEOUT: 1800 # 30 minutes
+  MAX_CONCURRENT: 2
+
+jobs:
+  monitor-open-prs:
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------------------------
+      # STEP 1 — FETCH OPEN PRs FROM UPSTREAM VIA GITHUB API
+      # --------------------------------------------------------------------
+      - name: Fetch open PRs and merge bases from upstream
+        id: fetch-prs
+        env:
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "Fetching open PRs from upstream ${UPSTREAM_REPO}..."
+
+          # Read all open PRs from the upstream repository
+          prs_json="[]"
+          page=1
+          per_page=100
+          while true; do
+            batch=$(curl -s -H "Accept: application/vnd.github.v3+json" -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/${UPSTREAM_REPO}/pulls?state=open&per_page=${per_page}&page=${page}")
+
+            # Check if the response is a valid array
+            if ! echo "$batch" | jq -e 'type == "array"' >/dev/null 2>&1; then
+              echo "API error or non-array response: $(echo "$batch" | jq -c . 2>/dev/null || echo "$batch")"
+              break
+            fi
+
+            # Get the number of PRs in the batch and add them to the prs_json array
+            count=$(echo "$batch" | jq 'length')
+            [[ "$count" -eq 0 ]] && break
+            prs_json=$(echo "$prs_json" "$batch" | jq -s 'add')
+            [[ "$count" -lt "$per_page" ]] && break
+            page=$((page + 1))
+          done
+
+          # Get the total number of PRs in the prs_json array
+          pr_count=$(echo "$prs_json" | jq 'length')
+          echo "Found $pr_count open PR(s) in upstream."
+
+          # If there are no PRs, exit
+          if [[ "$pr_count" -eq 0 ]]; then
+            echo '[]' > prs_to_analyze.json
+            echo "pr_count=0" >> $GITHUB_OUTPUT
+            echo "No PRs to analyze in upstream."
+            exit 0
+          fi
+
+          # Get the repository name
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          results="[]"
+          base_ref="${BRANCH}"
+
+          # Iterate over the PRs and add them to the prs_to_analyze.json array
+          for idx in $(seq 0 $((pr_count - 1))); do
+            head_repo=$(echo "$prs_json" | jq -r ".[$idx].head.repo.full_name")
+
+            # Check if the PR is from the upstream repository
+            if [[ "$head_repo" != "$UPSTREAM_REPO" ]]; then
+
+              # If the PR is not from the upstream repository, skip it
+              pr_num=$(echo "$prs_json" | jq -r ".[$idx].number")
+              echo "Skipping PR #${pr_num} (head from fork: ${head_repo})"
+              continue
+            fi
+
+            # Get the head SHA and PR number
+            head_sha=$(echo "$prs_json" | jq -r ".[$idx].head.sha")
+            pr_num=$(echo "$prs_json" | jq -r ".[$idx].number")
+            head_ref=$(echo "$prs_json" | jq -r ".[$idx].head.ref")
+
+            # Get the merge base SHA
+            compare=$(curl -s -H "Accept: application/vnd.github.v3+json" -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/${UPSTREAM_REPO}/compare/${base_ref}...${head_sha}")
+            merge_base_sha=$(echo "$compare" | jq -r '.merge_base_commit.sha // empty')
+
+            # If the merge base SHA is not found, skip the PR
+            if [[ -z "$merge_base_sha" ]] || [[ "$merge_base_sha" == "null" ]]; then
+              echo "Skipping PR #${pr_num}: could not get merge base"
+              continue
+            fi
+
+            # Get the files changed in the PR to make sure there are Python files changed
+            files=$(echo "$compare" | jq -r '.files[]?.filename // empty')
+            has_py=false
+            if [[ -n "$files" ]]; then
+              while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                if [[ "$f" == *.py ]]; then has_py=true; break; fi
+              done <<< "$files"
+            fi
+
+            # If there are no Python files changed, skip the PR
+            if ! $has_py; then
+              echo "Skipping PR #${pr_num}: no Python files changed"
+              continue
+            fi
+
+            # One dispatch_id per PR, reused in analysis and filter steps
+            dispatch_id="pr-${pr_num}-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+            echo "PR #${pr_num} dispatch_id=${dispatch_id} head=${head_sha} merge_base=${merge_base_sha} (branch ${head_ref})"
+            entry=$(jq -n \
+              --arg pr "$pr_num" \
+              --arg head "$head_sha" \
+              --arg base "$merge_base_sha" \
+              --arg ref "$head_ref" \
+              --arg did "$dispatch_id" \
+              '{pr_number: $pr, head_sha: $head, merge_base_sha: $base, head_ref: $ref, dispatch_id: $did}')
+            results=$(echo "$results" | jq --argjson e "$entry" '. + [$e]')
+          done
+
+          # Save the prs_to_analyze.json array to a file
+          echo "$results" > prs_to_analyze.json
+          count=$(echo "$results" | jq 'length')
+          echo "pr_count=$count" >> $GITHUB_OUTPUT
+          echo "PRs to analyze: $count"
+
+      # --------------------------------------------------------------------
+      # STEP 2 — FETCH PR HEADS FROM UPSTREAM INTO CURRENT REPO
+      # --------------------------------------------------------------------
+      - name: Fetch upstream PR refs and push into current repo
+        if: steps.fetch-prs.outputs.pr_count != '0'  # Only run if there are PRs to analyze
+        env:
+          PUSH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Clone the current repository into a new directory
+          git clone --no-tags "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" push-repo
+          cd push-repo
+
+          # Configure the git user
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Add the upstream repository as a remote
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" || true
+          git fetch upstream --no-tags
+
+          # Iterate over the PRs and fetch the head SHA into the current repository
+          for idx in $(seq 0 $(($(jq 'length' ../prs_to_analyze.json) - 1))); do
+            pr_num=$(jq -r ".[$idx].pr_number" ../prs_to_analyze.json)
+            head_sha=$(jq -r ".[$idx].head_sha" ../prs_to_analyze.json)
+            echo "Fetching upstream PR #${pr_num} (${head_sha}) into current repo..."
+            git fetch upstream "refs/pull/${pr_num}/head:pr-${pr_num}" || true
+            git push origin "pr-${pr_num}" || true
+          done
+
+          # Go back to the root directory and remove the temporary repository
+          cd ..
+          rm -rf push-repo
+          echo "PR heads are now in current repo."
+
+      # --------------------------------------------------------------------
+      # STEP 3 — TRIGGER ANALYSIS WORKFLOWS
+      # --------------------------------------------------------------------
+      - name: Run analysis workflows for PRs
+        if: steps.fetch-prs.outputs.pr_count != '0'  # Only run if there are PRs to analyze
+        env:
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          set -euo pipefail
+
+          # Get the repository name, runner dispatch timeout and max concurrent
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          RUNNER_DISPATCH_TIMEOUT=${{ env.RUNNER_DISPATCH_TIMEOUT }}
+          MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
+
+          # Get the total number of PRs to analyze
+          total_prs=$(jq 'length' prs_to_analyze.json)
+          echo "Processing ${total_prs} PR(s) in batches of ${MAX_CONCURRENT}..."
+
+          # Iterate over the PRs in batches of max concurrent
+          for ((batch_start=0; batch_start<total_prs; batch_start+=MAX_CONCURRENT)); do
+
+            # Get the batch end and size
+            batch_end=$((batch_start + MAX_CONCURRENT))
+            ((batch_end > total_prs)) && batch_end=$total_prs
+            batch_size=$((batch_end - batch_start))
+            echo "Batch: PRs $((batch_start+1))–${batch_end} (${batch_size} PRs concurrently)"
+
+            # Initialize array to store the batch artifacts
+            declare -a batch_artifacts=()
+
+            # Iterate over the PRs in the batch (reuse dispatch_id from Step 1)
+            for ((idx=batch_start; idx<batch_end; idx++)); do
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
+              head_sha=$(jq -r ".[$idx].head_sha" prs_to_analyze.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+              echo "  PR #${pr_num}: dispatch_id=${dispatch_id}, base_sha=${base_sha}, head_sha=${head_sha}"
+
+              # Trigger the analysis workflow for the base SHA
+              gh workflow run run-analysis.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field commit="$base_sha" \
+                --field dispatch_type="prs" \
+                --field dispatch_id="$dispatch_id"
+
+              gh workflow run run-analysis.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field commit="$head_sha" \
+                --field dispatch_type="prs" \
+                --field dispatch_id="$dispatch_id"
+
+              batch_artifacts+=("continuous-analysis-prs-results-${dispatch_id}-${repo_name}-${base_sha}")
+              batch_artifacts+=("continuous-analysis-prs-results-${dispatch_id}-${repo_name}-${head_sha}")
+            done
+
+            # Wait for the batch artifacts to be created
+            echo "Waiting for ${#batch_artifacts[@]} artifacts which is 2 * ${batch_size} (timeout ${RUNNER_DISPATCH_TIMEOUT}s)..."
+            end_time=$(( $(date +%s) + RUNNER_DISPATCH_TIMEOUT ))
+            declare -a done_artifacts=()
+            while [[ $(date +%s) -lt $end_time ]]; do
+              names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+              for artifact in "${batch_artifacts[@]}"; do
+                if [[ " ${done_artifacts[@]} " =~ " ${artifact} " ]]; then continue; fi
+                if echo "$names" | grep -q "^${artifact}"; then
+                  echo "  ✓ ${artifact}"
+                  done_artifacts+=("$artifact")
+                fi
+              done
+              [[ ${#done_artifacts[@]} -eq ${#batch_artifacts[@]} ]] && break
+              sleep 60
+            done
+
+            # If the number of done artifacts is not equal to the number of batch artifacts, exit with error
+            if [[ ${#done_artifacts[@]} -ne ${#batch_artifacts[@]} ]]; then
+              echo "ERROR: Timeout waiting for batch artifacts (got ${#done_artifacts[@]}/${#batch_artifacts[@]})."
+              exit 1
+            fi
+
+            # Print that the batch completed
+            echo "Batch completed."
+          done
+
+      # --------------------------------------------------------------------
+      # STEP 4 — TRIGGER FILTER WORKFLOWS
+      # --------------------------------------------------------------------
+      - name: Run violation filter workflows for PRs
+        if: steps.fetch-prs.outputs.pr_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          set -euo pipefail
+
+          # Get the repository name, filter dispatch timeout and max concurrent
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+          FILTER_DISPATCH_TIMEOUT=${{ env.FILTER_DISPATCH_TIMEOUT }}
+          MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
+
+          # Get the total number of PRs to analyze
+          total_prs=$(jq 'length' prs_to_analyze.json)
+          echo "Running violation filters in batches of ${MAX_CONCURRENT} PR(s) (base first, then head)..."
+
+          # Iterate over the PRs in batches of max concurrent
+          for ((batch_start=0; batch_start<total_prs; batch_start+=MAX_CONCURRENT)); do
+
+            # Get the batch end and size
+            batch_end=$((batch_start + MAX_CONCURRENT))
+            ((batch_end > total_prs)) && batch_end=$total_prs
+            batch_size=$((batch_end - batch_start))
+            echo "Filter batch: PRs $((batch_start+1))–${batch_end} (${batch_size} PRs)"
+
+            # --- Phase 1: dispatch and wait for BASE filter (reuse dispatch_id from Step 1) ---
+            declare -a batch_base_artifacts=()
+            for ((idx=batch_start; idx<batch_end; idx++)); do
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+
+              gh workflow run run-filter.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field current_commit="$base_sha" \
+                --field previous_commit="" \
+                --field dispatch_type="prs" \
+                --field dispatch_id="$dispatch_id" \
+                --field skip_commits_pattern="0"
+
+              batch_base_artifacts+=("continuous-analysis-prs-filtered-base-results-${dispatch_id}-${repo_name}-${base_sha}")
+            done
+
+            echo "Waiting for ${#batch_base_artifacts[@]} base filter artifact(s)..."
+            end_time=$(( $(date +%s) + FILTER_DISPATCH_TIMEOUT ))
+            done_base=()
+            while [[ $(date +%s) -lt $end_time ]]; do
+              names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+              for art in "${batch_base_artifacts[@]}"; do
+                [[ " ${done_base[@]} " =~ " ${art} " ]] && continue
+                echo "$names" | grep -q "^${art}" && { done_base+=("$art"); echo "  ✓ $art"; }
+              done
+              [[ ${#done_base[@]} -eq ${#batch_base_artifacts[@]} ]] && break
+              sleep 30
+            done
+            [[ ${#done_base[@]} -ne ${#batch_base_artifacts[@]} ]] && { echo "ERROR: Timeout waiting for base filter artifacts."; exit 1; }
+
+            # --- Phase 2: dispatch and wait for HEAD filter (reuse same dispatch_id per PR) ---
+            declare -a batch_head_artifacts=()
+            for ((idx=batch_start; idx<batch_end; idx++)); do
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
+              head_sha=$(jq -r ".[$idx].head_sha" prs_to_analyze.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+
+              gh workflow run run-filter.yml \
+                --repo "${GITHUB_REPOSITORY}" \
+                --ref "${BRANCH}" \
+                --field current_commit="$head_sha" \
+                --field previous_commit="$base_sha" \
+                --field dispatch_type="prs" \
+                --field dispatch_id="$dispatch_id" \
+                --field skip_commits_pattern="0"
+
+              batch_head_artifacts+=("continuous-analysis-prs-filtered-results-${dispatch_id}-${repo_name}-${head_sha}")
+            done
+
+            echo "Waiting for ${#batch_head_artifacts[@]} head filter artifact(s)..."
+            end_time=$(( $(date +%s) + FILTER_DISPATCH_TIMEOUT ))
+            done_head=()
+            while [[ $(date +%s) -lt $end_time ]]; do
+              names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+                | jq -r '.artifacts[].name')
+              for art in "${batch_head_artifacts[@]}"; do
+                [[ " ${done_head[@]} " =~ " ${art} " ]] && continue
+                echo "$names" | grep -q "^${art}" && { done_head+=("$art"); echo "  ✓ $art"; }
+              done
+              [[ ${#done_head[@]} -eq ${#batch_head_artifacts[@]} ]] && break
+              sleep 30
+            done
+            [[ ${#done_head[@]} -ne ${#batch_head_artifacts[@]} ]] && { echo "ERROR: Timeout waiting for head filter artifacts."; exit 1; }
+
+            echo "Filter batch completed."
+          done
+
+          echo "All PR violation filters completed."
