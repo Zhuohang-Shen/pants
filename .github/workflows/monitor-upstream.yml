@@ -27,7 +27,7 @@ jobs:
       UPSTREAM_REPO: "pantsbuild/pants"
       BRANCH: "main"
       RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
-      MAX_CONCURRENT: 9
+      MAX_CONCURRENT: 2
 
     steps:
       # --------------------------------------------------------------------
@@ -164,6 +164,7 @@ jobs:
                 --repo "${GITHUB_REPOSITORY}" \
                 --ref "${BRANCH}" \
                 --field commit="$commit" \
+                --field dispatch_type="history" \
                 --field dispatch_id="$dispatch_id"
 
               dispatched_commits+=("$commit")
@@ -210,7 +211,7 @@ jobs:
       - name: Create release and upload artifacts
         id: make-release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
         run: |
           set -euo pipefail
 
