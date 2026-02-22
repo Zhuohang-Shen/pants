@@ -2,7 +2,7 @@ name: Monitor Upstream and Run Analysis
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch:
     inputs:
       number_of_commits:
