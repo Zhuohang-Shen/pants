@@ -2,7 +2,7 @@ name: Monitor Open PRs and Run Analysis
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 permissions:
@@ -78,14 +78,14 @@ jobs:
           for idx in $(seq 0 $((pr_count - 1))); do
             head_repo=$(echo "$prs_json" | jq -r ".[$idx].head.repo.full_name")
 
-            # Check if the PR is from the upstream repository
-            if [[ "$head_repo" != "$UPSTREAM_REPO" ]]; then
+            # # Check if the PR is from the upstream repository
+            # if [[ "$head_repo" != "$UPSTREAM_REPO" ]]; then
 
-              # If the PR is not from the upstream repository, skip it
-              pr_num=$(echo "$prs_json" | jq -r ".[$idx].number")
-              echo "Skipping PR #${pr_num} (head from fork: ${head_repo})"
-              continue
-            fi
+            #   # If the PR is not from the upstream repository, skip it
+            #   pr_num=$(echo "$prs_json" | jq -r ".[$idx].number")
+            #   echo "Skipping PR #${pr_num} (head from fork: ${head_repo})"
+            #   continue
+            # fi
 
             # Get the head SHA and PR number
             head_sha=$(echo "$prs_json" | jq -r ".[$idx].head.sha")
@@ -144,12 +144,12 @@ jobs:
       - name: Fetch upstream PR refs and push into current repo
         if: steps.fetch-prs.outputs.pr_count != '0'  # Only run if there are PRs to analyze
         env:
-          PUSH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
         run: |
           set -euo pipefail
 
           # Clone the current repository into a new directory
-          git clone --no-tags "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" push-repo
+          git clone --no-tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" push-repo
           cd push-repo
 
           # Configure the git user
@@ -175,10 +175,55 @@ jobs:
           echo "PR heads are now in current repo."
 
       # --------------------------------------------------------------------
-      # STEP 3 — TRIGGER ANALYSIS WORKFLOWS
+      # STEP 3 — SKIP PRs WHOSE FILTERED RESULT ALREADY EXISTS
+      # --------------------------------------------------------------------
+      - name: Filter PRs whose filtered result already exists
+        id: filter-prs
+        if: steps.fetch-prs.outputs.pr_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
+
+          # Collect all artifact names (paginate)
+          all_artifacts=""
+          page=1
+          per_page=100
+          while true; do
+            names=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=${per_page}&page=${page}" \
+              | jq -r '.artifacts[].name')
+            all_artifacts="${all_artifacts}"$'\n'"${names}"
+            [[ -z "$names" ]] || [[ $(echo "$names" | wc -l) -lt $per_page ]] && break
+            page=$((page + 1))
+          done
+
+          # Head filter artifact pattern: continuous-analysis-prs-filtered-results-*-{repo_name}-{head_sha}
+          results="[]"
+          total=$(jq 'length' prs_to_analyze.json)
+          for idx in $(seq 0 $((total - 1))); do
+            pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
+            head_sha=$(jq -r ".[$idx].head_sha" prs_to_analyze.json)
+            suffix="-${repo_name}-${head_sha}"
+            if echo "$all_artifacts" | grep -q "continuous-analysis-prs-filtered-results-.*${suffix}"; then
+              echo "Skip PR #${pr_num}: head filter artifact already exists (head=${head_sha})"
+              continue
+            fi
+            entry=$(jq -c ".[$idx]" prs_to_analyze.json)
+            results=$(echo "$results" | jq --argjson e "$entry" '. + [$e]')
+          done
+
+          echo "$results" > prs_to_process.json
+          count=$(echo "$results" | jq 'length')
+          echo "prs_to_process_count=$count" >> $GITHUB_OUTPUT
+          echo "PRs to process (after skipping already-done): $count"
+
+      # --------------------------------------------------------------------
+      # STEP 4 — TRIGGER ANALYSIS WORKFLOWS
       # --------------------------------------------------------------------
       - name: Run analysis workflows for PRs
-        if: steps.fetch-prs.outputs.pr_count != '0'  # Only run if there are PRs to analyze
+        if: steps.filter-prs.outputs.prs_to_process_count != '' && steps.filter-prs.outputs.prs_to_process_count != '0'
         env:
           GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
           BRANCH: ${{ env.BRANCH }}
@@ -190,8 +235,8 @@ jobs:
           RUNNER_DISPATCH_TIMEOUT=${{ env.RUNNER_DISPATCH_TIMEOUT }}
           MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
 
-          # Get the total number of PRs to analyze
-          total_prs=$(jq 'length' prs_to_analyze.json)
+          # Use PRs that still need processing (skip already have filter result)
+          total_prs=$(jq 'length' prs_to_process.json)
           echo "Processing ${total_prs} PR(s) in batches of ${MAX_CONCURRENT}..."
 
           # Iterate over the PRs in batches of max concurrent
@@ -208,10 +253,10 @@ jobs:
 
             # Iterate over the PRs in the batch (reuse dispatch_id from Step 1)
             for ((idx=batch_start; idx<batch_end; idx++)); do
-              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
-              head_sha=$(jq -r ".[$idx].head_sha" prs_to_analyze.json)
-              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
-              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_process.json)
+              head_sha=$(jq -r ".[$idx].head_sha" prs_to_process.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_process.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_process.json)
               echo "  PR #${pr_num}: dispatch_id=${dispatch_id}, base_sha=${base_sha}, head_sha=${head_sha}"
 
               # Trigger the analysis workflow for the base SHA
@@ -263,10 +308,10 @@ jobs:
           done
 
       # --------------------------------------------------------------------
-      # STEP 4 — TRIGGER FILTER WORKFLOWS
+      # STEP 5 — TRIGGER FILTER WORKFLOWS
       # --------------------------------------------------------------------
       - name: Run violation filter workflows for PRs
-        if: steps.fetch-prs.outputs.pr_count != '0'
+        if: steps.filter-prs.outputs.prs_to_process_count != '' && steps.filter-prs.outputs.prs_to_process_count != '0'
         env:
           GH_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
           BRANCH: ${{ env.BRANCH }}
@@ -278,8 +323,8 @@ jobs:
           FILTER_DISPATCH_TIMEOUT=${{ env.FILTER_DISPATCH_TIMEOUT }}
           MAX_CONCURRENT=${{ env.MAX_CONCURRENT }}
 
-          # Get the total number of PRs to analyze
-          total_prs=$(jq 'length' prs_to_analyze.json)
+          # Use PRs that still need processing
+          total_prs=$(jq 'length' prs_to_process.json)
           echo "Running violation filters in batches of ${MAX_CONCURRENT} PR(s) (base first, then head)..."
 
           # Iterate over the PRs in batches of max concurrent
@@ -294,9 +339,9 @@ jobs:
             # --- Phase 1: dispatch and wait for BASE filter (reuse dispatch_id from Step 1) ---
             declare -a batch_base_artifacts=()
             for ((idx=batch_start; idx<batch_end; idx++)); do
-              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
-              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
-              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_process.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_process.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_process.json)
 
               gh workflow run run-filter.yml \
                 --repo "${GITHUB_REPOSITORY}" \
@@ -329,10 +374,10 @@ jobs:
             # --- Phase 2: dispatch and wait for HEAD filter (reuse same dispatch_id per PR) ---
             declare -a batch_head_artifacts=()
             for ((idx=batch_start; idx<batch_end; idx++)); do
-              pr_num=$(jq -r ".[$idx].pr_number" prs_to_analyze.json)
-              head_sha=$(jq -r ".[$idx].head_sha" prs_to_analyze.json)
-              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_analyze.json)
-              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_analyze.json)
+              pr_num=$(jq -r ".[$idx].pr_number" prs_to_process.json)
+              head_sha=$(jq -r ".[$idx].head_sha" prs_to_process.json)
+              base_sha=$(jq -r ".[$idx].merge_base_sha" prs_to_process.json)
+              dispatch_id=$(jq -r ".[$idx].dispatch_id" prs_to_process.json)
 
               gh workflow run run-filter.yml \
                 --repo "${GITHUB_REPOSITORY}" \
