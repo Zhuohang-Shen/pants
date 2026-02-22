@@ -7,10 +7,16 @@ on:
         description: 'Single commit SHA to test'
         required: true
         type: string
-      dispatch_id:
-        description: "Unique id from dispatcher for history runnings"
+      dispatch_type:
+        description: "Type of dispatch: history or prs (empty for continuous mode)"
         required: false
         type: string
+        default: ""
+      dispatch_id:
+        description: "Unique id from dispatcher for history / PR runnings"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: read
@@ -23,6 +29,7 @@ jobs:
     with:
       project: ${{ github.repository }}
       commit: ${{ inputs.commit }}
+      dispatch_type: ${{ inputs.dispatch_type }}
       dispatch_id: ${{ inputs.dispatch_id }}
     secrets:
       ORG_WIDE_TOKEN: ${{ secrets.ORG_WIDE_TOKEN }}
