@@ -31,7 +31,7 @@ jobs:
       BRANCH: "main"
       RUNNER_DISPATCH_TIMEOUT: 7200 # 2 hours
       FILTER_DISPATCH_TIMEOUT: 1800 # 30 minutes
-      MAX_CONCURRENT: 1
+      MAX_CONCURRENT: 2
 
     steps:
       # --------------------------------------------------------------------
@@ -202,8 +202,10 @@ jobs:
           if [[ "${{ inputs.number_of_commits }}" -gt 0 ]]; then
             dispatch_id="$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
             echo "Historical run dispatch ID: $dispatch_id"
+            echo "dispatch_type=history" >> $GITHUB_OUTPUT
             echo "dispatch_id=$dispatch_id" >> $GITHUB_OUTPUT
           else
+            echo "dispatch_type=" >> $GITHUB_OUTPUT
             echo "dispatch_id=" >> $GITHUB_OUTPUT
           fi
 
@@ -216,6 +218,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mapfile -t commits < new_commits.txt
+          dispatch_type="${{ steps.dispatch-id.outputs.dispatch_type }}"
           dispatch_id="${{ steps.dispatch-id.outputs.dispatch_id }}"
           repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
 
@@ -295,6 +298,7 @@ jobs:
                 --repo "${GITHUB_REPOSITORY}" \
                 --ref "${BRANCH}" \
                 --field commit="$commit" \
+                --field dispatch_type="$dispatch_type" \
                 --field dispatch_id="$dispatch_id"
 
               dispatched_commits+=("$commit")
@@ -339,6 +343,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mapfile -t commits < new_commits.txt
+          dispatch_type="${{ steps.dispatch-id.outputs.dispatch_type }}"
           dispatch_id="${{ steps.dispatch-id.outputs.dispatch_id }}"
           repo_name=$(echo "${GITHUB_REPOSITORY}" | cut -d'/' -f2)
 
@@ -372,6 +377,7 @@ jobs:
               --ref "${BRANCH}" \
               --field current_commit="$current" \
               --field previous_commit="$previous" \
+              --field dispatch_type="$dispatch_type" \
               --field dispatch_id="$dispatch_id" \
               --field skip_commits_pattern="${{ inputs.skip_commits }}"
 
