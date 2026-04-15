@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import PurePath
 
-from pants.backend.python.dependency_inference import module_mapper, parse_python_dependencies
+from pants.backend.python.dependency_inference import module_mapper
 from pants.backend.python.dependency_inference.default_unowned_dependencies import (
     DEFAULT_UNOWNED_DEPENDENCIES,
 )
@@ -26,9 +26,11 @@ from pants.backend.python.dependency_inference.parse_python_dependencies import 
     ParsedPythonImports,
     ParsePythonDependenciesRequest,
     PythonFileDependencies,
+    PythonFilesDependencies,
+    parse_python_dependencies,
 )
 from pants.backend.python.dependency_inference.parse_python_dependencies import (
-    parse_python_dependencies as parse_python_dependencies_get,
+    rules as parse_python_dependencies_rules,
 )
 from pants.backend.python.dependency_inference.subsystem import (
     AmbiguityResolution,
@@ -374,18 +376,16 @@ async def _handle_unowned_imports(
 
 
 async def _exec_parse_deps(
-    field_set: PythonImportDependenciesInferenceFieldSet,
-    python_setup: PythonSetup,
-) -> PythonFileDependencies:
-    source = await determine_source_files(SourceFilesRequest([field_set.source]))
-    resp = await parse_python_dependencies_get(
+    sources: tuple[PythonSourceField, ...],
+) -> PythonFilesDependencies:
+    source = await determine_source_files(SourceFilesRequest(sources))
+    ret = await parse_python_dependencies(
         ParsePythonDependenciesRequest(
             source,
         ),
         **implicitly(),
     )
-    assert len(resp.path_to_deps) == 1
-    return next(iter(resp.path_to_deps.values()))
+    return ret
 
 
 @dataclass(frozen=True)
@@ -473,7 +473,9 @@ async def infer_python_dependencies_via_source(
     if not python_infer_subsystem.imports and not python_infer_subsystem.assets:
         return InferredDependencies([])
 
-    parsed_dependencies = await _exec_parse_deps(request.field_set, python_setup)
+    files_deps = await _exec_parse_deps((request.field_set.source,))
+    assert len(files_deps.path_to_deps) == 1
+    parsed_dependencies = next(iter(files_deps.path_to_deps.values()))
 
     resolve = request.field_set.resolve.normalized_value(python_setup)
 
@@ -635,7 +637,7 @@ def import_rules():
         find_other_owners_for_unowned_import,
         infer_python_dependencies_via_source,
         *pex.rules(),
-        *parse_python_dependencies.rules(),
+        *parse_python_dependencies_rules(),
         *module_mapper.rules(),
         *stripped_source_files.rules(),
         *target_types.rules(),

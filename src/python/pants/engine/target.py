@@ -2132,6 +2132,27 @@ class DependenciesRequest(EngineAwareParameter):
         return self.field.address.spec
 
 
+@dataclass(frozen=True)
+class DependenciesMultiRequest(EngineAwareParameter):
+    fields: tuple[Dependencies, ...]
+    should_traverse_deps_predicate: ShouldTraverseDepsPredicate = TraverseIfDependenciesField()
+
+    def debug_hint(self) -> str:
+        if not self.fields:
+            return "0 targets"
+        return f"{len(self.fields)} targets, including {self.fields[0].address.spec}"
+
+
+@dataclass(frozen=True)
+class DependenciesMultiResult:
+    """The result of `DependenciesMultiRequest`.
+
+    `dependencies` is index-aligned with the `fields` of the originating `DependenciesMultiRequest`.
+    """
+
+    dependencies: tuple[Addresses, ...]
+
+
 # NB: ExplicitlyProvidedDependenciesRequest does not have a predicate unlike DependenciesRequest.
 @dataclass(frozen=True)
 class ExplicitlyProvidedDependenciesRequest(EngineAwareParameter):
@@ -2294,6 +2315,14 @@ class InferDependenciesRequest(Generic[FS], EngineAwareParameter):
     infer_from: ClassVar[type[FS]]
 
     field_set: FS
+
+
+@union(in_scope_types=[EnvironmentName])
+@dataclass(frozen=True)
+class InferDependenciesMultiRequest(Generic[FS], EngineAwareParameter):
+    infer_from: ClassVar[type[FS]]
+
+    field_sets: tuple[FS, ...]
 
 
 @dataclass(frozen=True)
