@@ -11,12 +11,14 @@ from pants.backend.python.goals.pytest_runner import (
 )
 from pants.backend.python.subsystems.pytest import PyTest
 from pants.backend.python.util_rules.interpreter_constraints import InterpreterConstraints
-from pants.backend.python.util_rules.lockfile_metadata import PythonLockfileMetadataV3
+from pants.backend.python.util_rules.lockfile_metadata import (
+    LockfileFormat,
+    PythonLockfileMetadataV3,
+)
 from pants.backend.python.util_rules.pex import PexRequirementsInfo
 from pants.backend.python.util_rules.pex_requirements import (
     LoadedLockfile,
     Lockfile,
-    LockfileFormat,
 )
 from pants.engine.fs import DigestContents, FileContent
 from pants.engine.internals.native_engine import EMPTY_DIGEST

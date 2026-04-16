@@ -252,6 +252,7 @@ def generate_python_tool_lockfiles(
             "--python-pip-version=latest",
             f"--python-interpreter-constraints=['{default_python_interpreter_constraints}']",
             "--python-enable-resolves",
+            "--python-resolver=uv",
             # Unset any existing resolve names in the Pants repo, and set to just our temporary ones.
             f"--python-resolves={resolves}",
             f"--python-resolves-to-interpreter-constraints={resolves_to_ics}",
@@ -322,7 +323,7 @@ def generate(
     ]
 
     if dry_run:
-        logger.info("Would run: " + " ".join(repr(arg) for arg in args))
+        logger.info("Would run: " + " ".join(repr(arg) for arg in args) + f" in {buildroot}")
         return
 
     # If there is a pre-existing lockfile, seed it so we get the pretty lockfile diff
@@ -332,6 +333,14 @@ def generate(
         if os.path.isfile(lockfile_dest):
             logger.debug(f"copying existing lockfile from {lockfile_dest}")
             shutil.copy(lockfile_dest, lockfile_buildroot_filename(tool.lockfile_name))
+            try:
+                # If there's sidecar metadata, copy that too.
+                shutil.copy(
+                    lockfile_dest + ".metadata",
+                    lockfile_buildroot_filename(tool.lockfile_name) + ".metadata",
+                )
+            except FileNotFoundError:
+                pass
 
     logger.debug("Running: " + " ".join(repr(arg) for arg in args))
     subprocess.run(args, cwd=buildroot, check=True)

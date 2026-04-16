@@ -33,6 +33,7 @@ from pants.backend.python.target_types import (
     PythonTestTarget,
 )
 from pants.backend.python.util_rules import pex_from_targets, pex_test_utils
+from pants.backend.python.util_rules.lockfile_metadata import LockfileFormat
 from pants.backend.python.util_rules.pex import (
     OptionalPex,
     OptionalPexRequest,
@@ -51,7 +52,6 @@ from pants.backend.python.util_rules.pex_from_targets import (
 )
 from pants.backend.python.util_rules.pex_requirements import (
     EntireLockfile,
-    LockfileFormat,
     PexRequirements,
     Resolve,
 )
@@ -926,6 +926,11 @@ def test_lockfile_requirements_selection(
             importlib.resources.files("pants.backend.python.subsystems") / "setuptools.lock"
         ).read_bytes()
         mode_files.update({"3rdparty/python/default.lock": lock_content})
+        lock_metadata_content = (
+            importlib.resources.files("pants.backend.python.subsystems")
+            / "setuptools.lock.metadata"
+        ).read_bytes()
+        mode_files.update({"3rdparty/python/default.lock.metadata": lock_metadata_content})
 
     rule_runner.write_files(mode_files)
 
