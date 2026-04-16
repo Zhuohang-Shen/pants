@@ -6,6 +6,7 @@ from __future__ import annotations
 import itertools
 import json
 import textwrap
+import tomllib
 
 import pytest
 
@@ -16,7 +17,7 @@ from pants.backend.python.util_rules.pex_requirements import (
     LoadedLockfile,
     LoadedLockfileRequest,
     Lockfile,
-    ResolvePexConfig,
+    ResolveConfig,
     ResolvePexConstraintsFile,
     _pex_lockfile_requirement_count,
     get_metadata,
@@ -172,7 +173,7 @@ def test_validate_lockfiles(
         req_strings,
         validate_consumed_req_strings=True,
         python_setup=create_python_setup(InvalidLockfileBehavior.warn),
-        resolve_config=ResolvePexConfig(
+        resolve_config=ResolveConfig(
             indexes=(),
             find_links=(),
             manylinux="not-manylinux" if invalid_manylinux else None,
@@ -359,10 +360,10 @@ def test_pex_lockfile_requirement_count() -> None:
     )
 
 
-class TestResolvePexConfigPexArgs:
+class TestResolveConfigPexArgs:
     def simple_config_args(self, manylinux=None, only_binary=None, no_binary=None):
         return tuple(
-            ResolvePexConfig(
+            ResolveConfig(
                 indexes=[],
                 find_links=[],
                 manylinux=manylinux,
@@ -437,7 +438,7 @@ class TestResolvePexConfigPexArgs:
         assert "--uploaded-prior-to" not in " ".join(args)
 
         args = tuple(
-            ResolvePexConfig(
+            ResolveConfig(
                 indexes=[],
                 find_links=[],
                 manylinux=None,
@@ -456,6 +457,113 @@ class TestResolvePexConfigPexArgs:
         assert "--uploaded-prior-to=2023-09-20" in args
 
 
+def _uv_config(
+    indexes=None,
+    find_links=None,
+    extra_find_links=(),
+    only_binary=None,
+    no_binary=None,
+    uploaded_prior_to=None,
+):
+    cfg = ResolveConfig(
+        indexes=indexes if indexes is not None else ["https://pypi.org/simple"],
+        find_links=find_links or [],
+        manylinux=None,
+        constraints_file=None,
+        no_binary=FrozenOrderedSet(no_binary) if no_binary else FrozenOrderedSet(),
+        only_binary=FrozenOrderedSet(only_binary) if only_binary else FrozenOrderedSet(),
+        excludes=FrozenOrderedSet(),
+        overrides=FrozenOrderedSet(),
+        sources=FrozenOrderedSet(),
+        path_mappings=[],
+        lock_style="universal",
+        complete_platforms=(),
+        uploaded_prior_to=uploaded_prior_to,
+    )
+    return tomllib.loads(cfg.uv_config(extra_find_links=extra_find_links))
+
+
+def test_uv_config_indexes():
+    parsed = _uv_config(indexes=[])
+    assert parsed.get("no-index") is True
+    assert "index" not in parsed
+
+    parsed = _uv_config(indexes=["https://example.com/simple"])
+    assert len(parsed["index"]) == 1
+    assert parsed["index"][0]["url"] == "https://example.com/simple"
+    assert parsed["index"][0]["default"] is True
+
+    parsed = _uv_config(
+        indexes=["https://primary.example.com/simple", "https://secondary.example.com/simple"]
+    )
+    indexes = parsed["index"]
+    assert len(indexes) == 2
+    assert indexes[0]["url"] == "https://primary.example.com/simple"
+    assert indexes[0]["default"] is True
+    assert indexes[1]["url"] == "https://secondary.example.com/simple"
+    assert indexes[1].get("name") == "extra-1"
+
+
+def test_uv_config_find_links():
+    parsed = _uv_config(find_links=["https://example.com/wheels"])
+    assert parsed["find-links"] == ["https://example.com/wheels"]
+
+    parsed = _uv_config(
+        find_links=["https://a.example.com/wheels"],
+        extra_find_links=("https://b.example.com/wheels",),
+    )
+    assert parsed["find-links"] == [
+        "https://a.example.com/wheels",
+        "https://b.example.com/wheels",
+    ]
+
+
+def test_uv_config_no_binary():
+    parsed = _uv_config(no_binary=["foo", "bar"])
+    assert parsed["no-binary-package"] == ["foo", "bar"]
+    assert "no-binary" not in parsed
+
+    parsed = _uv_config(no_binary=[":all:"])
+    assert parsed.get("no-binary") is True
+    assert "no-binary-package" not in parsed
+
+    # :all: wins even when combined with package names
+    parsed = _uv_config(no_binary=["foo", ":all:"])
+    assert parsed.get("no-binary") is True
+    assert "no-binary-package" not in parsed
+
+    # :none: means "no restriction" — no key emitted
+    parsed = _uv_config(no_binary=[":none:"])
+    assert "no-binary" not in parsed
+    assert "no-binary-package" not in parsed
+
+
+def test_uv_config_only_binary():
+    parsed = _uv_config(only_binary=["foo", "bar"])
+    assert parsed["no-build-package"] == ["foo", "bar"]
+    assert "no-build" not in parsed
+
+    parsed = _uv_config(only_binary=[":all:"])
+    assert parsed.get("no-build") is True
+    assert "no-build-package" not in parsed
+
+    parsed = _uv_config(only_binary=["foo", ":all:"])
+    assert parsed.get("no-build") is True
+    assert "no-build-package" not in parsed
+
+    parsed = _uv_config(only_binary=[":none:"])
+    assert "no-build" not in parsed
+    assert "no-build-package" not in parsed
+
+
+def test_uv_config_exclude_newer():
+    parsed = _uv_config(uploaded_prior_to="2023-09-20")
+    assert parsed["exclude-newer"] == "2023-09-20"
+
+    parsed = _uv_config()
+    assert "exclude-newer" not in parsed
+
+
 def test_load_lockfile_ignores_unknown_sidecar_metadata_version() -> None:
     rule_runner = RuleRunner(
         rules=[
@@ -463,7 +571,11 @@ def test_load_lockfile_ignores_unknown_sidecar_metadata_version() -> None:
             QueryRule(LoadedLockfile, [LoadedLockfileRequest]),
         ],
     )
-    rule_runner.set_options(["--python-invalid-lockfile-behavior=ignore"])
+    rule_runner.set_options(
+        [
+            "--python-invalid-lockfile-behavior=ignore",
+        ]
+    )
     rule_runner.write_files(
         {
             "lock.json": "{}",

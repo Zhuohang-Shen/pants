@@ -76,6 +76,7 @@ class PexCliProcess:
     description: str = dataclasses.field(compare=False)
     additional_input_digest: Digest | None
     extra_env: FrozenDict[str, str] | None
+    append_only_caches: FrozenDict[str, str] | None
     output_files: tuple[str, ...] | None
     output_directories: tuple[str, ...] | None
     level: LogLevel
@@ -90,6 +91,7 @@ class PexCliProcess:
         description: str,
         additional_input_digest: Digest | None = None,
         extra_env: Mapping[str, str] | None = None,
+        append_only_caches: Mapping[str, str] | None = None,
         output_files: Iterable[str] | None = None,
         output_directories: Iterable[str] | None = None,
         level: LogLevel = LogLevel.INFO,
@@ -101,6 +103,11 @@ class PexCliProcess:
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "additional_input_digest", additional_input_digest)
         object.__setattr__(self, "extra_env", FrozenDict(extra_env) if extra_env else None)
+        object.__setattr__(
+            self,
+            "append_only_caches",
+            FrozenDict(append_only_caches) if append_only_caches else None,
+        )
         object.__setattr__(self, "output_files", tuple(output_files) if output_files else None)
         object.__setattr__(
             self, "output_directories", tuple(output_directories) if output_directories else None
@@ -214,8 +221,11 @@ async def setup_pex_cli_process(
         input_digest=input_digest,
         env=env,
         output_files=request.output_files,
-        output_directories=request.output_directories,
-        append_only_caches=complete_pex_env.append_only_caches,
+        output_directories=request.output_directories or tuple(),
+        append_only_caches={
+            **complete_pex_env.append_only_caches,
+            **(request.append_only_caches or FrozenDict({})),
+        },
         level=request.level,
         concurrency_available=request.concurrency_available,
         cache_scope=request.cache_scope,

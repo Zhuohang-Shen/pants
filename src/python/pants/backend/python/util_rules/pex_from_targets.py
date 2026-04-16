@@ -21,6 +21,7 @@ from pants.backend.python.target_types import (
 from pants.backend.python.util_rules.interpreter_constraints import InterpreterConstraints
 from pants.backend.python.util_rules.local_dists import LocalDistsPexRequest, build_local_dists
 from pants.backend.python.util_rules.local_dists import rules as local_dists_rules
+from pants.backend.python.util_rules.lockfile_metadata import LockfileFormat
 from pants.backend.python.util_rules.pex import (
     CompletePlatforms,
     OptionalPexRequest,
@@ -34,7 +35,6 @@ from pants.backend.python.util_rules.pex_requirements import (
     EntireLockfile,
     LoadedLockfileRequest,
     Lockfile,
-    LockfileFormat,
     PexRequirements,
     Resolve,
     load_lockfile,
