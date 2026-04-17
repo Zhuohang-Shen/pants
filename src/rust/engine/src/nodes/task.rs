@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use deepsize::DeepSizeOf;
-use futures::future::{self, BoxFuture, FutureExt};
+use futures::future::{self, BoxFuture, Either, FutureExt};
 use graph::CompoundNode;
 use internment::Intern;
 use pyo3::prelude::{PyAnyMethods, PyErr, Python};
@@ -166,17 +166,14 @@ impl Task {
                 }
                 GeneratorResponse::All(items) => {
                     let _blocking_token = workunit.blocking();
-                    let get_futures = items
-                        .into_iter()
-                        .map(|item| match item {
-                            externs::AllItem::Generator(generator) => {
-                                Self::gen_generator(context, params.clone(), entry, generator)
-                            }
-                            externs::AllItem::Call(call) => {
-                                Self::gen_call(context, params.clone(), entry, call).boxed()
-                            }
-                        })
-                        .collect::<Vec<_>>();
+                    let get_futures = items.into_iter().map(|item| match item {
+                        externs::AllItem::Generator(generator) => Either::Left(
+                            Self::gen_generator(context, params.clone(), entry, generator),
+                        ),
+                        externs::AllItem::Call(call) => {
+                            Either::Right(Self::gen_call(context, params.clone(), entry, call))
+                        }
+                    });
                     match future::try_join_all(get_futures).await {
                         Ok(values) => {
                             let values_tuple_result =
