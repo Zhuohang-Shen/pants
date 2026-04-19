@@ -1,16 +1,5 @@
-# Copyright (C) 2025 Shoal Software LLC. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Copyright 2026 Pants project contributors (see CONTRIBUTORS.md).
+# Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 from __future__ import annotations
 
@@ -38,8 +27,10 @@ from packaging.version import Version
 
 from pants.testutil.python_interpreter_selection import python_interpreter_path
 from pants.util.dirutil import safe_file_dump
-from shoalsoft.pants_opentelemetry_plugin.pants_integration_testutil import run_pants_with_workdir
-from shoalsoft.pants_opentelemetry_plugin.subsystem import TracingExporterId
+from pants.backend.observability.opentelemetry.pants_integration_testutil import (
+    run_pants_with_workdir,
+)
+from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +113,14 @@ def _assert_trace_requests(requests: Iterable[trace_service_pb2.ExportTraceServi
                         root_span = span
 
                     workunit_level_attr = _get_span_attr(span, "pantsbuild.workunit.level")
-                    assert (
-                        workunit_level_attr is not None
-                    ), "Missing workunit.level attribute in span."
+                    assert workunit_level_attr is not None, (
+                        "Missing workunit.level attribute in span."
+                    )
 
                     workunit_span_id_attr = _get_span_attr(span, "pantsbuild.workunit.span_id")
-                    assert (
-                        workunit_span_id_attr is not None
-                    ), "Missing workunit.span_id attribute in span."
+                    assert workunit_span_id_attr is not None, (
+                        "Missing workunit.span_id attribute in span."
+                    )
 
     assert root_span is not None, "No root span found."
     assert (
@@ -308,9 +299,9 @@ def test_opentelemetry_integration(subtests, pants_major_minor: str) -> None:
         "3.11" if Version(pants_major_minor) >= Version("2.25") else "3.9"
     )
     python_path = python_interpreter_path(py_version_for_pants_major_minor)
-    assert (
-        python_path
-    ), f"Did not find a compatible Python interpreter for test: Pants v{pants_major_minor}"
+    assert python_path, (
+        f"Did not find a compatible Python interpreter for test: Pants v{pants_major_minor}"
+    )
 
     # Install a venv expanded from the plugin's pex file. (The BUILD file arranges for the pex files to be materialized
     # in the sandbox as dependencies.)
@@ -322,9 +313,9 @@ def test_opentelemetry_integration(subtests, pants_major_minor: str) -> None:
         if name.startswith(f"shoalsoft-pants-opentelemetry-plugin-pants{pants_major_minor}")
         and name.endswith(".pex")
     ]
-    assert (
-        len(plugin_pex_files) == 1
-    ), f"Expected to find exactly one pex file for Pants {pants_major_minor}."
+    assert len(plugin_pex_files) == 1, (
+        f"Expected to find exactly one pex file for Pants {pants_major_minor}."
+    )
     subprocess.run(
         [python_path, plugin_pex_files[0], "venv", str(plugin_venv_path)],
         env={"PEX_TOOLS": "1"},
@@ -362,7 +353,7 @@ def test_opentelemetry_integration(subtests, pants_major_minor: str) -> None:
         [GLOBAL]
         pants_version = "{pants_version}"
         pythonpath = ["{site_packages_path}"]
-        backend_packages = ["pants.backend.python", "shoalsoft.pants_opentelemetry_plugin"]
+        backend_packages = ["pants.backend.python", "pants.backend.observability.opentelemetry"]
         print_stacktrace = true
         pantsd = false
 

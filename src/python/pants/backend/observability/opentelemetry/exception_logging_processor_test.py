@@ -1,16 +1,7 @@
-# Copyright (C) 2025 Shoal Software LLC. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Copyright 2026 Pants project contributors (see CONTRIBUTORS.md).
+# Licensed under the Apache License, Version 2.0 (see LICENSE).
+## Copyright 2026 Pants project contributors (see CONTRIBUTORS.md).
+# Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 import datetime
 import logging
@@ -20,10 +11,10 @@ from collections.abc import Mapping
 import pytest
 
 from pants.util.frozendict import FrozenDict
-from shoalsoft.pants_opentelemetry_plugin.exception_logging_processor import (
+from pants.backend.observability.opentelemetry.exception_logging_processor import (
     ExceptionLoggingProcessor,
 )
-from shoalsoft.pants_opentelemetry_plugin.processor import (
+from pants.backend.observability.opentelemetry.processor import (
     IncompleteWorkunit,
     Level,
     Processor,
