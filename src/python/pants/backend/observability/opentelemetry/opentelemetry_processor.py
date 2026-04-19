@@ -20,8 +20,12 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
 )
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider, sampling
-from opentelemetry.sdk.trace.export import SpanProcessor  # type: ignore[attr-defined]
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+    SpanProcessor,  # type: ignore[attr-defined]
+)
 from opentelemetry.trace import Link, TraceFlags
 from opentelemetry.trace.span import (
     NonRecordingSpan,
@@ -31,8 +35,6 @@ from opentelemetry.trace.span import (
     format_trace_id,
 )
 from opentelemetry.trace.status import StatusCode
-
-from pants.util.frozendict import FrozenDict
 from pants.backend.observability.opentelemetry.opentelemetry_config import OtlpParameters
 from pants.backend.observability.opentelemetry.processor import (
     IncompleteWorkunit,
@@ -42,10 +44,11 @@ from pants.backend.observability.opentelemetry.processor import (
     Workunit,
 )
 from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
+from pants.util.frozendict import FrozenDict
 
 logger = logging.getLogger(__name__)
 
-_UNIX_EPOCH = datetime.datetime(year=1970, month=1, day=1, tzinfo=datetime.timezone.utc)
+_UNIX_EPOCH = datetime.datetime(year=1970, month=1, day=1, tzinfo=datetime.UTC)
 
 
 @contextmanager

@@ -1,7 +1,5 @@
 # Copyright 2026 Pants project contributors (see CONTRIBUTORS.md).
 # Licensed under the Apache License, Version 2.0 (see LICENSE).
-## Copyright 2026 Pants project contributors (see CONTRIBUTORS.md).
-# Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 import datetime
 import logging
@@ -10,7 +8,6 @@ from collections.abc import Mapping
 
 import pytest
 
-from pants.util.frozendict import FrozenDict
 from pants.backend.observability.opentelemetry.exception_logging_processor import (
     ExceptionLoggingProcessor,
 )
@@ -21,6 +18,7 @@ from pants.backend.observability.opentelemetry.processor import (
     ProcessorContext,
     Workunit,
 )
+from pants.util.frozendict import FrozenDict
 
 
 class AlwaysRaisesExceptionProcessor(Processor):
@@ -46,7 +44,7 @@ class MockProcessorContext(ProcessorContext):
 
 @pytest.fixture
 def incomplete_workunit() -> IncompleteWorkunit:
-    start_time = datetime.datetime.now(datetime.timezone.utc)
+    start_time = datetime.datetime.now(datetime.UTC)
     return IncompleteWorkunit(
         name="test-span",
         span_id="SOME_SPAN_ID",

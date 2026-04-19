@@ -7,7 +7,6 @@ import datetime
 import queue
 from collections.abc import Mapping
 
-from pants.util.frozendict import FrozenDict
 from pants.backend.observability.opentelemetry.processor import (
     IncompleteWorkunit,
     Level,
@@ -18,6 +17,7 @@ from pants.backend.observability.opentelemetry.processor import (
 from pants.backend.observability.opentelemetry.single_threaded_processor import (
     SingleThreadedProcessor,
 )
+from pants.util.frozendict import FrozenDict
 
 
 class CapturingProcessor(Processor):
@@ -55,7 +55,7 @@ def test_single_threaded_processor_roundtrip() -> None:
     stp_processor.initialize()
     assert processor.initialize_called
 
-    start_time = datetime.datetime.now(datetime.timezone.utc)
+    start_time = datetime.datetime.now(datetime.UTC)
     incomplete_workunit = IncompleteWorkunit(
         name="test-span",
         span_id="SOME_SPAN_ID",
@@ -68,7 +68,7 @@ def test_single_threaded_processor_roundtrip() -> None:
     actual_incomplete_workunit = processor.started_workunits.get(timeout=0.250)
     assert actual_incomplete_workunit == incomplete_workunit
 
-    start_time = datetime.datetime.now(datetime.timezone.utc)
+    start_time = datetime.datetime.now(datetime.UTC)
     workunit = Workunit(
         name=incomplete_workunit.name,
         span_id=incomplete_workunit.span_id,

@@ -8,16 +8,6 @@ import logging
 
 from packaging.version import Version
 
-from pants.base.build_root import BuildRoot
-from pants.engine.env_vars import EnvironmentVarsRequest
-from pants.engine.rules import collect_rules, implicitly, rule
-from pants.engine.streaming_workunit_handler import (
-    WorkunitsCallback,
-    WorkunitsCallbackFactory,
-    WorkunitsCallbackFactoryRequest,
-)
-from pants.engine.unions import UnionRule
-from pants.version import PANTS_SEMVER
 from pants.backend.observability.opentelemetry.exception_logging_processor import (
     ExceptionLoggingProcessor,
 )
@@ -28,6 +18,16 @@ from pants.backend.observability.opentelemetry.single_threaded_processor import 
 )
 from pants.backend.observability.opentelemetry.subsystem import TelemetrySubsystem
 from pants.backend.observability.opentelemetry.workunit_handler import TelemetryWorkunitsCallback
+from pants.base.build_root import BuildRoot
+from pants.engine.env_vars import EnvironmentVarsRequest
+from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.streaming_workunit_handler import (
+    WorkunitsCallback,
+    WorkunitsCallbackFactory,
+    WorkunitsCallbackFactoryRequest,
+)
+from pants.engine.unions import UnionRule
+from pants.version import PANTS_SEMVER
 
 logger = logging.getLogger(__name__)
 

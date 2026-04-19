@@ -5,15 +5,15 @@ from __future__ import annotations
 
 import pytest
 
-from pants.engine.rules import QueryRule
-from pants.engine.streaming_workunit_handler import WorkunitsCallbackFactory
-from pants.testutil.rule_runner import RuleRunner
 from pants.backend.observability.opentelemetry import register
 from pants.backend.observability.opentelemetry.register import (
     TelemetryWorkunitsCallbackFactoryRequest,
 )
 from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
 from pants.backend.observability.opentelemetry.workunit_handler import TelemetryWorkunitsCallback
+from pants.engine.rules import QueryRule
+from pants.engine.streaming_workunit_handler import WorkunitsCallbackFactory
+from pants.testutil.rule_runner import RuleRunner
 
 
 @pytest.fixture

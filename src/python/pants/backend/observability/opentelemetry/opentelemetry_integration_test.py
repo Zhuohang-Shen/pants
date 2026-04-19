@@ -20,17 +20,17 @@ from typing import Any, Iterable, Mapping
 
 import httpx
 import pytest
+from packaging.version import Version
+
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2
 from opentelemetry.proto.common.v1 import common_pb2
 from opentelemetry.proto.trace.v1 import trace_pb2
-from packaging.version import Version
-
-from pants.testutil.python_interpreter_selection import python_interpreter_path
-from pants.util.dirutil import safe_file_dump
 from pants.backend.observability.opentelemetry.pants_integration_testutil import (
     run_pants_with_workdir,
 )
 from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
+from pants.testutil.python_interpreter_selection import python_interpreter_path
+from pants.util.dirutil import safe_file_dump
 
 logger = logging.getLogger(__name__)
 

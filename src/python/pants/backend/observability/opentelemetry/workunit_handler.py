@@ -6,10 +6,6 @@ from __future__ import annotations
 import datetime
 from typing import Any, Mapping
 
-from pants.engine.internals.native_engine import all_counter_names
-from pants.engine.internals.scheduler import Workunit as RawWorkunit
-from pants.engine.streaming_workunit_handler import StreamingWorkunitContext, WorkunitsCallback
-from pants.util.frozendict import FrozenDict
 from pants.backend.observability.opentelemetry.processor import (
     IncompleteWorkunit,
     Level,
@@ -17,6 +13,10 @@ from pants.backend.observability.opentelemetry.processor import (
     ProcessorContext,
     Workunit,
 )
+from pants.engine.internals.native_engine import all_counter_names
+from pants.engine.internals.scheduler import Workunit as RawWorkunit
+from pants.engine.streaming_workunit_handler import StreamingWorkunitContext, WorkunitsCallback
+from pants.util.frozendict import FrozenDict
 
 
 class _TelemetryContext(ProcessorContext):
@@ -49,7 +49,7 @@ class TelemetryWorkunitsCallback(WorkunitsCallback):
         return self.async_completion
 
     def _convert_time(self, seconds: int, nanoseconds: int) -> datetime.datetime:
-        t = datetime.datetime(year=1970, month=1, day=1, tzinfo=datetime.timezone.utc)
+        t = datetime.datetime(year=1970, month=1, day=1, tzinfo=datetime.UTC)
         t = t + datetime.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
         return t
 

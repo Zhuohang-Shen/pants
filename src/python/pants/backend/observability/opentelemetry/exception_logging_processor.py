@@ -25,7 +25,7 @@ class ExceptionLoggingProcessor(Processor):
         self._exception_count = 0
 
     @contextmanager
-    def _wrapper(self) -> Generator[None, None, None]:
+    def _wrapper(self) -> Generator[None]:
         try:
             yield
         except Exception as ex:
