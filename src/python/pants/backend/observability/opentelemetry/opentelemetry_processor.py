@@ -19,12 +19,11 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
     OTLPSpanExporter as HttpOTLPSpanExporter,
 )
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider, sampling
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider, sampling
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     SpanExporter,
     SpanExportResult,
-    SpanProcessor,  # type: ignore[attr-defined]
 )
 from opentelemetry.trace import Link, TraceFlags
 from opentelemetry.trace.span import (
