@@ -162,9 +162,9 @@ def do_test_of_otlp_http_exporter(
 
         result = run_pants_with_workdir(
             [
-                "--shoalsoft-opentelemetry-enabled",
-                f"--shoalsoft-opentelemetry-exporter={TracingExporterId.OTLP.value}",
-                f"--shoalsoft-opentelemetry-exporter-endpoint=http://127.0.0.1:{server_port}/v1/traces",
+                "--opentelemetry-enabled",
+                f"--opentelemetry-exporter={TracingExporterId.OTLP.value}",
+                f"--opentelemetry-exporter-endpoint=http://127.0.0.1:{server_port}/v1/traces",
                 "list",
                 "otlp-http::",
             ],
@@ -210,8 +210,8 @@ def do_test_of_json_file_exporter(
 
         result = run_pants_with_workdir(
             [
-                "--shoalsoft-opentelemetry-enabled",
-                f"--shoalsoft-opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
+                "--opentelemetry-enabled",
+                f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
                 "list",
                 "otel-json::",
             ],
@@ -260,9 +260,9 @@ def do_test_of_resource_attributes(
 
         result = run_pants_with_workdir(
             [
-                "--shoalsoft-opentelemetry-enabled",
-                f"--shoalsoft-opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
-                "--shoalsoft-opentelemetry-json-file=dist/otel-resource-attrs-trace.jsonl",
+                "--opentelemetry-enabled",
+                f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
+                "--opentelemetry-json-file=dist/otel-resource-attrs-trace.jsonl",
                 "version",
             ],
             pants_exe_args=pants_exe_args,

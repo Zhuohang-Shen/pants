@@ -27,8 +27,8 @@ class OtelCompression(enum.Enum):
 
 
 class TelemetrySubsystem(Subsystem):
-    options_scope = "shoalsoft-opentelemetry"
-    help = "Pants OpenTelemetry plugin from Shoal Software LLC"
+    options_scope = "opentelemetry"
+    help = "OpenTelemetry backend"
 
     enabled = BoolOption(default=False, help="Whether to enable emitting OpenTelemetry spans.")
 
@@ -86,7 +86,7 @@ class TelemetrySubsystem(Subsystem):
             f"""
             If set, Pants will write OpenTelemetry tracing spans to a local file for easier debugging. Each line
             will be a tracing span in OpenTelemetry's JSON format. The filename is relative to the build root. Export
-            will only occur if the `--shoalsoft-opentelemetry-exporter` is set to `{TracingExporterId.JSON_FILE.value}`.
+            will only occur if the `--opentelemetry-exporter` is set to `{TracingExporterId.JSON_FILE.value}`.
             """
         ),
     )
@@ -115,7 +115,7 @@ class TelemetrySubsystem(Subsystem):
             """
             The target to which the exporter is going to send traces, metrics, or logs. The endpoint MUST be a valid URL host,
             and MAY contain a scheme (http or https), port and path. The plugin will construct a "signal-specific" URL for
-            sending traces by appending the applicable URL path if the signal-specific `[shoalsoft-opentelemetry].exporter_traces_endpoint`
+            sending traces by appending the applicable URL path if the signal-specific `[opentelemetry].exporter_traces_endpoint`
             option is not already set to override this option.
 
             Corresponds to the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
@@ -130,10 +130,10 @@ class TelemetrySubsystem(Subsystem):
             """
             The target to which the exporter is going to send traces. The endpoint MUST be a valid URL host,
             and MAY contain a scheme (http or https), port and path. If this option is set, then the
-            `[shoalsoft-opentelemetry].exporter_endpoint` option will not be used. The URL is not modified
+            `[opentelemetry].exporter_endpoint` option will not be used. The URL is not modified
             at all since it is specific to the traces endpoint to use.
 
-            You should not normally need to set this option. Prefer using the `[shoalsoft-opentelemetry].exporter_endpoint`
+            You should not normally need to set this option. Prefer using the `[opentelemetry].exporter_endpoint`
             option instead.
 
             Corresponds to the `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.

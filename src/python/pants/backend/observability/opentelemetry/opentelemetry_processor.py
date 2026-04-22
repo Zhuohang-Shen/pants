@@ -131,8 +131,8 @@ def get_processor(
         json_file_path_str = json_file
         if not json_file_path_str:
             raise ValueError(
-                f"`--shoalsoft-opentelemetry-exporter` is set to `{TracingExporterId.JSON_FILE}` "
-                "but the `--shoalsoft-opentelemetry-json-file` option is not set."
+                f"`--opentelemetry-exporter` is set to `{TracingExporterId.JSON_FILE}` "
+                "but the `--opentelemetry-json-file` option is not set."
             )
         json_file_path = build_root / json_file_path_str
         json_file_path.parent.mkdir(parents=True, exist_ok=True)

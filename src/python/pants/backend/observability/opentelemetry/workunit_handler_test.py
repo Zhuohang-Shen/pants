@@ -26,8 +26,8 @@ def rule_runner() -> RuleRunner:
     )
     rule_runner.set_options(
         [
-            "--shoalsoft-opentelemetry-enabled",
-            f"--shoalsoft-opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
+            "--opentelemetry-enabled",
+            f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
         ]
     )
     return rule_runner
