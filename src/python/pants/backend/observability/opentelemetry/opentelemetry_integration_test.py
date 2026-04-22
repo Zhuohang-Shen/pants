@@ -5,10 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import subprocess
-import tempfile
-import textwrap
 import threading
 import time
 import typing
@@ -16,28 +12,17 @@ from dataclasses import dataclass
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Iterable, Mapping
-
-import httpx
-import pytest
-from packaging.version import Version
+from typing import Any, Iterable
 
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2
 from opentelemetry.proto.common.v1 import common_pb2
 from opentelemetry.proto.trace.v1 import trace_pb2
-from pants.backend.observability.opentelemetry.pants_integration_testutil import (
-    run_pants_with_workdir,
-)
+import requests
+
 from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
-from pants.testutil.python_interpreter_selection import python_interpreter_path
-from pants.util.dirutil import safe_file_dump
+from pants.testutil.pants_integration_test import run_pants, setup_tmpdir
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_write_files(base_path: str | os.PathLike, files: Mapping[str, str | bytes]) -> None:
-    for name, content in files.items():
-        safe_file_dump(os.path.join(base_path, name), content, makedirs=True)
 
 
 @dataclass(frozen=True)
@@ -54,6 +39,7 @@ class _RequestRecorder(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_POST(self):
@@ -71,10 +57,10 @@ def _wait_for_server_availability(port: int, *, num_attempts: int = 4) -> None:
     url = f"http://127.0.0.1:{port}/"
     while num_attempts > 0:
         try:
-            r = httpx.get(url)
+            r = requests.get(url)
             if r.status_code == 200:
                 break
-        except httpx.ConnectError:
+        except requests.exceptions.ConnectionError:
             pass
 
         num_attempts -= 1
@@ -132,13 +118,7 @@ def _assert_trace_requests(requests: Iterable[trace_service_pb2.ExportTraceServi
     assert metrics_attr is not None, "Missing metrics attribute in root span."
 
 
-def do_test_of_otlp_http_exporter(
-    *,
-    buildroot: Path,
-    pants_exe_args: Iterable[str],
-    workdir_base: Path,
-    extra_env: Mapping[str, str] | None = None,
-) -> None:
+def test_otlp_http_exporter() -> None:
     recorded_requests: list[RecordedRequest] = []
     server_handler = partial(_RequestRecorder, requests=recorded_requests)
     http_server = HTTPServer(("127.0.0.1", 0), server_handler)
@@ -157,25 +137,19 @@ def do_test_of_otlp_http_exporter(
         "otlp-http/BUILD": "python_sources(name='src')\n",
         "otlp-http/main.py": "print('Hello World!)\n",
     }
-    with tempfile.TemporaryDirectory(dir=workdir_base) as workdir:
-        _safe_write_files(buildroot, sources)
-
-        result = run_pants_with_workdir(
+    with setup_tmpdir(sources) as tmpdir:
+        result = run_pants(
             [
+                "--backend-packages=['pants.backend.python', 'pants.backend.observability.opentelemetry']",
                 "--opentelemetry-enabled",
                 f"--opentelemetry-exporter={TracingExporterId.OTLP.value}",
                 f"--opentelemetry-exporter-endpoint=http://127.0.0.1:{server_port}/v1/traces",
                 "list",
-                "otlp-http::",
+                f"{tmpdir}/otlp-http::",
             ],
-            pants_exe_args=pants_exe_args,
-            workdir=str(workdir),
             extra_env={
-                **(extra_env if extra_env else {}),
-                "PANTS_BUILDROOT_OVERRIDE": str(buildroot),
                 "TRACEPARENT": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
             },
-            cwd=buildroot,
             stream_output=True,
         )
         result.assert_success()
@@ -191,38 +165,26 @@ def do_test_of_otlp_http_exporter(
         _assert_trace_requests([_convert(request.body) for request in recorded_requests])
 
 
-def do_test_of_json_file_exporter(
-    *,
-    buildroot: Path,
-    pants_exe_args: Iterable[str],
-    workdir_base: Path,
-    extra_env: Mapping[str, str] | None = None,
-) -> None:
+def test_json_file_exporter() -> None:
     sources = {
         "otel-json/BUILD": "python_sources(name='src')\n",
         "otel-json/main.py": "print('Hello World!)\n",
     }
-    with tempfile.TemporaryDirectory(dir=workdir_base) as workdir:
-        _safe_write_files(buildroot, sources)
-
-        trace_file = Path(buildroot) / "dist" / "otel-json-trace.jsonl"
+    with setup_tmpdir(sources) as tmpdir:
+        trace_file = Path("dist", "otel-json-trace.jsonl")
         assert not trace_file.exists()
 
-        result = run_pants_with_workdir(
+        result = run_pants(
             [
+                "--backend-packages=['pants.backend.python', 'pants.backend.observability.opentelemetry']",
                 "--opentelemetry-enabled",
                 f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
                 "list",
-                "otel-json::",
+                f"{tmpdir}/otel-json::",
             ],
-            pants_exe_args=pants_exe_args,
-            workdir=str(workdir),
             extra_env={
-                **(extra_env if extra_env else {}),
-                "PANTS_BUILDROOT_OVERRIDE": str(buildroot),
                 "TRACEPARENT": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00",
             },
-            cwd=buildroot,
         )
         result.assert_success()
 
@@ -245,170 +207,37 @@ def do_test_of_json_file_exporter(
         )
 
 
-def do_test_of_resource_attributes(
-    *,
-    buildroot: Path,
-    pants_exe_args: Iterable[str],
-    workdir_base: Path,
-    extra_env: Mapping[str, str] | None = None,
-) -> None:
+def test_resource_attributes() -> None:
     """Test that OTEL_RESOURCE_ATTRIBUTES are properly included in
     telemetry."""
-    with tempfile.TemporaryDirectory(dir=workdir_base) as workdir:
-        trace_file = Path(buildroot) / "dist" / "otel-resource-attrs-trace.jsonl"
-        assert not trace_file.exists()
+    trace_file = Path("dist", "otel-json-trace-resource-attributes.jsonl")
+    assert not trace_file.exists()
 
-        result = run_pants_with_workdir(
-            [
-                "--opentelemetry-enabled",
-                f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
-                "--opentelemetry-json-file=dist/otel-resource-attrs-trace.jsonl",
-                "version",
-            ],
-            pants_exe_args=pants_exe_args,
-            workdir=str(workdir),
-            extra_env={
-                **(extra_env if extra_env else {}),
-                "PANTS_BUILDROOT_OVERRIDE": str(buildroot),
-                "OTEL_RESOURCE_ATTRIBUTES": "user.name=testuser,team=ml-platform,env=test",
-            },
-            cwd=buildroot,
-        )
-        result.assert_success()
-
-        # Assert that tracing spans were output with resource attributes
-        traces_content = trace_file.read_text()
-        for trace_line in traces_content.splitlines():
-            trace_json = json.loads(trace_line)
-            resource_attrs = trace_json["resource"]["attributes"]
-
-            # Verify standard attributes
-            assert resource_attrs["service.name"] == "pantsbuild"
-            assert "telemetry.sdk.name" in resource_attrs
-
-            # Verify our custom resource attributes from OTEL_RESOURCE_ATTRIBUTES
-            assert resource_attrs["user.name"] == "testuser"
-            assert resource_attrs["team"] == "ml-platform"
-            assert resource_attrs["env"] == "test"
-
-
-@pytest.mark.parametrize("pants_major_minor", ["2.31", "2.30", "2.29", "2.28", "2.27"])
-def test_opentelemetry_integration(subtests, pants_major_minor: str) -> None:
-    # Find the Python interpreter compatible with this version of Pants.
-    py_version_for_pants_major_minor = (
-        "3.11" if Version(pants_major_minor) >= Version("2.25") else "3.9"
+    result = run_pants(
+        [
+            "--backend-packages=['pants.backend.python', 'pants.backend.observability.opentelemetry']",
+            "--opentelemetry-enabled",
+            f"--opentelemetry-exporter={TracingExporterId.JSON_FILE.value}",
+            "--opentelemetry-json-file=dist/otel-json-trace-resource-attributes.jsonl",
+            "version",
+        ],
+        extra_env={
+            "OTEL_RESOURCE_ATTRIBUTES": "user.name=testuser,team=ml-platform,env=test",
+        },
     )
-    python_path = python_interpreter_path(py_version_for_pants_major_minor)
-    assert python_path, (
-        f"Did not find a compatible Python interpreter for test: Pants v{pants_major_minor}"
-    )
+    result.assert_success()
 
-    # Install a venv expanded from the plugin's pex file. (The BUILD file arranges for the pex files to be materialized
-    # in the sandbox as dependencies.)
-    plugin_venv_path = (Path.cwd() / f"plugin-venv-{pants_major_minor}").resolve()
-    plugin_venv_path.mkdir(parents=True)
-    plugin_pex_files = [
-        name
-        for name in os.listdir(Path.cwd())
-        if name.startswith(f"shoalsoft-pants-opentelemetry-plugin-pants{pants_major_minor}")
-        and name.endswith(".pex")
-    ]
-    assert len(plugin_pex_files) == 1, (
-        f"Expected to find exactly one pex file for Pants {pants_major_minor}."
-    )
-    subprocess.run(
-        [python_path, plugin_pex_files[0], "venv", str(plugin_venv_path)],
-        env={"PEX_TOOLS": "1"},
-        check=True,
-    )
-    site_packages_path = (
-        plugin_venv_path / "lib" / f"python{py_version_for_pants_major_minor}" / "site-packages"
-    )
+    # Assert that tracing spans were output with resource attributes
+    traces_content = trace_file.read_text()
+    for trace_line in traces_content.splitlines():
+        trace_json = json.loads(trace_line)
+        resource_attrs = trace_json["resource"]["attributes"]
 
-    # A pex of the Pants version in this resolve is materialised as `pants-MAJOR.MINOR.pex` in the sandbox.
-    # This is done to isolate the test environment's virtualenv from the Pants under test.
-    pants_pex_path = (Path.cwd() / f"pants-{pants_major_minor}.pex").resolve()
-    assert pants_pex_path.exists(), f"Expected to find pants-{pants_major_minor}.pex in sandbox."
+        # Verify standard attributes
+        assert resource_attrs["service.name"] == "pantsbuild"
+        assert "telemetry.sdk.name" in resource_attrs
 
-    # Create the buildroot for this test run.
-    buildroot = (Path.cwd() / f"buildroot-{pants_major_minor}").resolve()
-    buildroot.mkdir(parents=True)
-    (buildroot / "BUILDROOT").touch()
-
-    # Determine the full version of the Pants used for the test.
-    version_result = subprocess.run(
-        [python_path, str(pants_pex_path), "--version"],
-        env={"NO_SCIE_WARNING": "1"},
-        capture_output=True,
-        check=True,
-        cwd=buildroot,
-    )
-    pants_version = Version(version_result.stdout.decode("utf-8").strip())
-
-    # Write out common configuration file for all integration tests.
-    safe_file_dump(
-        str(buildroot / "pants.toml"),
-        textwrap.dedent(
-            f"""\
-        [GLOBAL]
-        pants_version = "{pants_version}"
-        pythonpath = ["{site_packages_path}"]
-        backend_packages = ["pants.backend.python", "pants.backend.observability.opentelemetry"]
-        print_stacktrace = true
-        pantsd = false
-
-        [python]
-        interpreter_constraints = "==3.11.*"
-        pip_version = "25.0"
-
-        [pex-cli]
-        version = "v2.33.9"
-        known_versions = [
-        "v2.33.9|macos_arm64|cfd9eb9bed9ac3c33d7da632a38973b42d2d77afe9fdef65dd43b53d0eeb4a98|4678343",
-        "v2.33.9|macos_x86_64|cfd9eb9bed9ac3c33d7da632a38973b42d2d77afe9fdef65dd43b53d0eeb4a98|4678343",
-        "v2.33.9|linux_x86_64|cfd9eb9bed9ac3c33d7da632a38973b42d2d77afe9fdef65dd43b53d0eeb4a98|4678343",
-        "v2.33.9|linux_arm64|cfd9eb9bed9ac3c33d7da632a38973b42d2d77afe9fdef65dd43b53d0eeb4a98|4678343",
-        ]
-        """
-        ),
-    )
-
-    pants_exe_args = [str(pants_pex_path)]
-    extra_env = {"PEX_PYTHON": python_path}
-
-    # Force Pants to resolve the plugin.
-    workdir_base = buildroot / ".pants.d" / "workdirs"
-    workdir_base.mkdir(parents=True)
-    with tempfile.TemporaryDirectory(dir=workdir_base) as workdir:
-        result = run_pants_with_workdir(
-            ["--version"],
-            pants_exe_args=pants_exe_args,
-            cwd=buildroot,
-            workdir=workdir,
-            extra_env=extra_env,
-        )
-        result.assert_success()
-
-    with subtests.test(msg="OTLP/HTTP span exporter"):
-        do_test_of_otlp_http_exporter(
-            buildroot=buildroot,
-            pants_exe_args=pants_exe_args,
-            workdir_base=workdir_base,
-            extra_env=extra_env,
-        )
-
-    with subtests.test(msg="OTEL/JSON file span exporter"):
-        do_test_of_json_file_exporter(
-            buildroot=buildroot,
-            pants_exe_args=pants_exe_args,
-            workdir_base=workdir_base,
-            extra_env=extra_env,
-        )
-
-    with subtests.test(msg="OTEL_RESOURCE_ATTRIBUTES support"):
-        do_test_of_resource_attributes(
-            buildroot=buildroot,
-            pants_exe_args=pants_exe_args,
-            workdir_base=workdir_base,
-            extra_env=extra_env,
-        )
+        # Verify our custom resource attributes from OTEL_RESOURCE_ATTRIBUTES
+        assert resource_attrs["user.name"] == "testuser"
+        assert resource_attrs["team"] == "ml-platform"
+        assert resource_attrs["env"] == "test"
