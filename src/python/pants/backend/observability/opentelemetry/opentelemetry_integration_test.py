@@ -14,10 +14,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Iterable
 
+import requests
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2
 from opentelemetry.proto.common.v1 import common_pb2
 from opentelemetry.proto.trace.v1 import trace_pb2
-import requests
 
 from pants.backend.observability.opentelemetry.subsystem import TracingExporterId
 from pants.testutil.pants_integration_test import run_pants, setup_tmpdir
