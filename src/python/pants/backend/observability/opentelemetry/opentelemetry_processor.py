@@ -34,7 +34,6 @@ from opentelemetry.trace.span import (
     format_trace_id,
 )
 from opentelemetry.trace.status import StatusCode
-
 from pants.backend.observability.opentelemetry.opentelemetry_config import OtlpParameters
 from pants.backend.observability.opentelemetry.processor import (
     IncompleteWorkunit,
