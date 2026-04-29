@@ -97,7 +97,7 @@ def run_ruff(
         [
             RuffFixRequest.Batch(
                 "",
-                tuple(check_field_sets),
+                check_input_sources.snapshot.files,
                 partition_metadata=_EmptyMetadata(),
                 snapshot=check_input_sources.snapshot,
             ),
@@ -118,7 +118,7 @@ def run_ruff(
         [
             RuffFormatRequest.Batch(
                 "",
-                tuple(format_field_sets),
+                format_input_sources.snapshot.files,
                 partition_metadata=_EmptyMetadata(),
                 snapshot=format_input_sources.snapshot,
             )

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 from pants.backend.python.lint.ruff.check.skip_field import SkipRuffCheckField
@@ -20,8 +21,14 @@ from pants.core.goals.fix import FixResult, FixTargetsRequest
 from pants.core.goals.lint import REPORT_DIR, LintResult, LintTargetsRequest
 from pants.core.util_rules.partitions import PartitionerType
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
-from pants.engine.fs import DigestSubset, PathGlobs, RemovePrefix
-from pants.engine.intrinsics import digest_subset_to_digest, remove_prefix
+from pants.engine.fs import DigestSubset, MergeDigests, PathGlobs, RemovePrefix
+from pants.engine.intrinsics import (
+    digest_subset_to_digest,
+    digest_to_snapshot,
+    merge_digests,
+    path_globs_to_digest,
+    remove_prefix,
+)
 from pants.engine.platform import Platform
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import FieldSet, Target
@@ -74,10 +81,27 @@ class RuffFixRequest(FixTargetsRequest):
         return RuffLintRequest.tool_id
 
 
+def _ancestor_init_files(files: tuple[str, ...]) -> tuple[str, ...]:
+    init_files = set[str]()
+    for file in files:
+        directory = PurePosixPath(file).parent
+        while directory != PurePosixPath("."):
+            init_files.add(str(directory / "__init__.py"))
+            directory = directory.parent
+    return tuple(sorted(init_files))
+
+
 @rule(desc="Fix with `ruff check --fix`", level=LogLevel.DEBUG)
 async def ruff_fix(request: RuffFixRequest.Batch, ruff: Ruff, platform: Platform) -> FixResult:
+    # Ruff's isort rules use package marker files to classify imports. The `fix` goal may split
+    # editable files into smaller batches, so include ancestor `__init__.py` files as read-only
+    # context while still asking Ruff to edit only the current batch.
+    init_digest = await path_globs_to_digest(PathGlobs(_ancestor_init_files(request.files)))
+    snapshot = await digest_to_snapshot(
+        await merge_digests(MergeDigests((request.snapshot.digest, init_digest)))
+    )
     result = await run_ruff(
-        RunRuffRequest(snapshot=request.snapshot, mode=RuffMode.FIX),
+        RunRuffRequest(snapshot=snapshot, files=request.files, mode=RuffMode.FIX),
         ruff,
         platform,
     )
@@ -94,7 +118,11 @@ async def ruff_lint(
         SourceFilesRequest(field_set.source for field_set in request.elements)
     )
     result = await run_ruff(
-        RunRuffRequest(snapshot=source_files.snapshot, mode=RuffMode.LINT),
+        RunRuffRequest(
+            snapshot=source_files.snapshot,
+            files=source_files.snapshot.files,
+            mode=RuffMode.LINT,
+        ),
         ruff,
         platform,
     )
