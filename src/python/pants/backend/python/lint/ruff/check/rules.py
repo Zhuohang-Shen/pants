@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import PurePath
 from typing import AbstractSet, Any
 
 from pants.backend.python.lint.ruff.check.skip_field import SkipRuffCheckField
@@ -104,12 +104,10 @@ def _ancestor_init_files(
 ) -> tuple[str, ...]:
     init_files = set[str]()
     for file in files:
-        directory = PurePosixPath(file).parent
-        while directory != PurePosixPath("."):
+        for directory in [parent for parent in PurePath(file).parents if str(parent) != "."]:
             init_file = str(directory / "__init__.py")
             if init_file in candidate_init_files:
                 init_files.add(init_file)
-            directory = directory.parent
     return tuple(sorted(init_files))
 
 
@@ -131,7 +129,7 @@ async def partition_ruff_fix(
             )
         )
     )
-    selected_init_files = {file for file in files if PurePosixPath(file).name == "__init__.py"}
+    selected_init_files = {file for file in files if PurePath(file).name == "__init__.py"}
     metadata = RuffFixPartitionMetadata(_ancestor_init_files(files, selected_init_files))
 
     return Partitions([Partition(files, metadata)])
