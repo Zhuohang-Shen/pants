@@ -28,7 +28,7 @@ from pants.core.goals.fix import FixResult
 from pants.core.goals.fmt import FmtResult
 from pants.core.goals.lint import LintResult
 from pants.core.util_rules import config_files
-from pants.core.util_rules.partitions import _EmptyMetadata
+from pants.core.util_rules.partitions import Partitions, _EmptyMetadata
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Address
 from pants.engine.fs import DigestContents
@@ -65,6 +65,7 @@ def rule_runner() -> RuleRunner:
             QueryRule(FixResult, [RuffFixRequest.Batch]),
             QueryRule(LintResult, [RuffLintRequest.Batch]),
             QueryRule(FmtResult, [RuffFormatRequest.Batch]),
+            QueryRule(Partitions, [RuffFixRequest.PartitionRequest]),
             QueryRule(SourceFiles, (SourceFilesRequest,)),
         ],
         target_types=[PythonSourcesGeneratorTarget],
@@ -242,6 +243,20 @@ def test_fix_preserves_init_py_package_context_for_import_sorting(rule_runner: R
     assert lint_result.exit_code == 1
     assert "I001" in lint_result.stdout
 
+    partitions = rule_runner.request(
+        Partitions,
+        [RuffFixRequest.PartitionRequest((init_field_set, processor_field_set))],
+    )
+    assert len(partitions) == 1
+    partition = partitions[0]
+    assert partition.elements == (
+        "src/python/pants/backend/observability/opentelemetry/__init__.py",
+        "src/python/pants/backend/observability/opentelemetry/processor.py",
+    )
+    assert partition.metadata.init_files == (
+        "src/python/pants/backend/observability/opentelemetry/__init__.py",
+    )
+
     fix_input_sources = rule_runner.request(
         SourceFiles, [SourceFilesRequest([processor_field_set.source])]
     )
@@ -251,7 +266,7 @@ def test_fix_preserves_init_py_package_context_for_import_sorting(rule_runner: R
             RuffFixRequest.Batch(
                 "",
                 ("src/python/pants/backend/observability/opentelemetry/processor.py",),
-                partition_metadata=_EmptyMetadata(),
+                partition_metadata=partition.metadata,
                 snapshot=fix_input_sources.snapshot,
             ),
         ],
