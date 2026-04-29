@@ -39,6 +39,15 @@ from pants.testutil.rule_runner import QueryRule, RuleRunner
 GOOD_FILE = 'a = "string without any placeholders"\n'
 BAD_FILE = 'a = f"string without any placeholders"\n'
 UNFORMATTED_FILE = 'a ="string without any placeholders"\n'
+IMPORTS_SHADOWED_BY_LOCAL_PACKAGE = (
+    "from opentelemetry import trace\n"
+    "\n"
+    "from pants.backend.observability.opentelemetry.config import Config\n"
+)
+IMPORTS_FIXED_FOR_LOCAL_PACKAGE = (
+    "from opentelemetry import trace\n"
+    "from pants.backend.observability.opentelemetry.config import Config\n"
+)
 
 
 @pytest.fixture
@@ -178,6 +187,84 @@ def test_multiple_targets(rule_runner: RuleRunner) -> None:
         {"good.py": GOOD_FILE, "bad.py": BAD_FILE, "unformatted.py": GOOD_FILE}
     )
     assert fmt_result.did_change is True
+
+
+def test_fix_preserves_init_py_package_context_for_import_sorting(rule_runner: RuleRunner) -> None:
+    rule_runner.write_files(
+        {
+            "pyproject.toml": "\n".join(
+                [
+                    "[tool.ruff.lint]",
+                    'select = ["I"]',
+                    "",
+                    "[tool.ruff.lint.isort]",
+                    'known-first-party = ["pants"]',
+                    "",
+                ]
+            ),
+            "src/python/pants/backend/observability/opentelemetry/BUILD": "python_sources()",
+            "src/python/pants/backend/observability/opentelemetry/__init__.py": "",
+            "src/python/pants/backend/observability/opentelemetry/processor.py": (
+                IMPORTS_SHADOWED_BY_LOCAL_PACKAGE
+            ),
+        }
+    )
+    rule_runner.set_options(
+        ["--backend-packages=pants.backend.python.lint.ruff"],
+        env_inherit={"PATH", "PYENV_ROOT", "HOME"},
+    )
+
+    init_tgt = rule_runner.get_target(
+        Address(
+            "src/python/pants/backend/observability/opentelemetry",
+            relative_file_path="__init__.py",
+        )
+    )
+    processor_tgt = rule_runner.get_target(
+        Address(
+            "src/python/pants/backend/observability/opentelemetry",
+            relative_file_path="processor.py",
+        )
+    )
+    init_field_set = RuffCheckFieldSet.create(init_tgt)
+    processor_field_set = RuffCheckFieldSet.create(processor_tgt)
+
+    lint_result = rule_runner.request(
+        LintResult,
+        [
+            RuffLintRequest.Batch(
+                "",
+                (init_field_set, processor_field_set),
+                partition_metadata=_EmptyMetadata(),
+            ),
+        ],
+    )
+    assert lint_result.exit_code == 1
+    assert "I001" in lint_result.stdout
+
+    fix_input_sources = rule_runner.request(
+        SourceFiles, [SourceFilesRequest([processor_field_set.source])]
+    )
+    fix_result = rule_runner.request(
+        FixResult,
+        [
+            RuffFixRequest.Batch(
+                "",
+                ("src/python/pants/backend/observability/opentelemetry/processor.py",),
+                partition_metadata=_EmptyMetadata(),
+                snapshot=fix_input_sources.snapshot,
+            ),
+        ],
+    )
+
+    assert fix_result.stdout == "Found 1 error (1 fixed, 0 remaining).\n"
+    assert fix_result.output == rule_runner.make_snapshot(
+        {
+            "src/python/pants/backend/observability/opentelemetry/processor.py": (
+                IMPORTS_FIXED_FOR_LOCAL_PACKAGE
+            )
+        }
+    )
 
 
 def test_skip_field(rule_runner: RuleRunner) -> None:
