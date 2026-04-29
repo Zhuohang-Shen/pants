@@ -6,7 +6,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import AbstractSet, Any
 
 from pants.backend.python.lint.ruff.check.skip_field import SkipRuffCheckField
 from pants.backend.python.lint.ruff.common import RunRuffRequest, run_ruff
@@ -100,7 +100,7 @@ class RuffFixPartitionMetadata:
 
 
 def _ancestor_init_files(
-    files: tuple[str, ...], candidate_init_files: set[str] | frozenset[str]
+    files: tuple[str, ...], candidate_init_files: AbstractSet[str]
 ) -> tuple[str, ...]:
     init_files = set[str]()
     for file in files:
