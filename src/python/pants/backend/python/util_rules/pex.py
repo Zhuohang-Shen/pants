@@ -614,7 +614,7 @@ async def _setup_pex_requirements(
         request.requirements
     )
     if loaded_lockfile:
-        if loaded_lockfile.lockfile_format == LockfileFormat.Uv:
+        if loaded_lockfile.lockfile_format == LockfileFormat.UV:
             # The caller will need to set the argv. This is slightly awkward, and due to
             # uv support being tacked on later. Fixing this will require a bit more of a
             # refactor than we want to do right now.
@@ -624,7 +624,7 @@ async def _setup_pex_requirements(
 
         argv = (
             ["--lock", loaded_lockfile.lockfile_path, *pex_lock_resolver_args]
-            if loaded_lockfile.lockfile_format == LockfileFormat.Pex
+            if loaded_lockfile.lockfile_format == LockfileFormat.PEX
             # We use pip to resolve a requirements.txt pseudo-lockfile, possibly with hashes.
             else [
                 "--requirement",
@@ -676,7 +676,7 @@ async def _setup_pex_requirements(
         if not reqs_info.req_strings:
             return _BuildPexRequirementsSetup([], [], concurrency_available)
 
-        if loaded_lockfile.lockfile_format == LockfileFormat.Uv:
+        if loaded_lockfile.lockfile_format == LockfileFormat.UV:
             return _BuildPexRequirementsSetup(
                 [], [], concurrency_available, uv_lockfile=loaded_lockfile
             )

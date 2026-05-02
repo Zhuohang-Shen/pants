@@ -822,9 +822,9 @@ def test_setup_pex_requirements() -> None:
             lockfile_path,
             metadata=None,
             requirement_estimate=2,
-            lockfile_format=LockfileFormat.Pex
+            lockfile_format=LockfileFormat.PEX
             if is_pex_lock
-            else LockfileFormat.ConstraintsDeprecated,
+            else LockfileFormat.CONSTRAINTS_DEPRECATED,
             as_constraints_strings=None,
             original_lockfile=lockfile_obj,
         )
@@ -1026,7 +1026,7 @@ def test_lockfile_validation(rule_runner: RuleRunner) -> None:
         lock_style="universal",
         complete_platforms=(),
         uploaded_prior_to=None,
-        lockfile_format=LockfileFormat.Pex,
+        lockfile_format=LockfileFormat.PEX,
         resolve="resolve_name",
     ).add_header_to_lockfile(b"", regenerate_command="regen", delimeter="#")
     rule_runner.write_files({"lock.txt": lock_content.decode()})

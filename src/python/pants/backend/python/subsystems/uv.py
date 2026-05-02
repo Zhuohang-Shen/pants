@@ -84,6 +84,7 @@ class DownloadedUv:
     digest: Digest
     exe: str
 
+    # The relpath to the named_cache inside the sandbox.
     cache_dir: ClassVar[str] = ".cache/uv_cache/"
 
     # Initial command line args for all invocations of this uv.

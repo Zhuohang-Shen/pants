@@ -653,7 +653,7 @@ def test_uv_lockfile_generation(
     # Verify the sidecar metadata.
     metadata = json.loads(by_path["test.lock.metadata"].content.decode())
     assert metadata["version"] == 8
-    assert metadata["lockfile_format"] == LockfileFormat.Uv
+    assert metadata["lockfile_format"] == LockfileFormat.UV
     assert metadata["valid_for_interpreter_constraints"] == ["CPython<3.15,>=3.9"]
     assert metadata["generated_with_requirements"] == [
         "ansicolors==1.1.8",

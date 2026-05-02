@@ -22,11 +22,11 @@ _python_lockfile_metadata = lockfile_metadata_registrar(LockfileScope.PYTHON)
 
 
 class LockfileFormat(StrEnum):
-    Pex = auto()
-    Uv = auto()
+    PEX = auto()
+    UV = auto()
     # The very old, deprecated constraints-based "lockfile" that should
     # be removed entirely.
-    ConstraintsDeprecated = auto()
+    CONSTRAINTS_DEPRECATED = auto()
 
 
 class InvalidPythonLockfileReason(Enum):

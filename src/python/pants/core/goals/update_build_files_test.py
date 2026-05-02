@@ -165,7 +165,7 @@ def test_get_lockfile_interpreter_constraints() -> None:
         lock_style="universal",
         complete_platforms=(),
         uploaded_prior_to=None,
-        lockfile_format=LockfileFormat.Pex,
+        lockfile_format=LockfileFormat.PEX,
         resolve="resolve_name",
     )
 
@@ -190,7 +190,7 @@ def test_get_lockfile_interpreter_constraints() -> None:
             "black.lock",
             metadata=metadata,
             requirement_estimate=1,
-            lockfile_format=LockfileFormat.Pex,
+            lockfile_format=LockfileFormat.PEX,
             as_constraints_strings=None,
             original_lockfile=Lockfile(
                 "black.lock", url_description_of_origin="foo", resolve_name="black"

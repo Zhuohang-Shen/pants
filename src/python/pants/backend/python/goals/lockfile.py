@@ -276,7 +276,7 @@ async def generate_pex_lockfile(
         lock_style=req.lock_style,
         complete_platforms=req.complete_platforms,
         uploaded_prior_to=pip_args_setup.resolve_config.uploaded_prior_to,
-        lockfile_format=LockfileFormat.Pex,
+        lockfile_format=LockfileFormat.PEX,
         resolve=req.resolve_name,
     )
     regenerate_command = (
@@ -315,7 +315,7 @@ async def generate_pex_lockfile(
 
     if req.diff:
         diff = await _generate_lockfile_diff(
-            final_lockfile_digest, req.resolve_name, req.lockfile_dest, LockfileFormat.Pex
+            final_lockfile_digest, req.resolve_name, req.lockfile_dest, LockfileFormat.PEX
         )
     else:
         diff = None
@@ -330,15 +330,10 @@ async def generate_uv_lockfile(
     downloaded_uv: DownloadedUv,
     uv_env: UvEnvironment,
 ) -> GenerateLockfileResult:
-    if not req.requirements:
-        raise ValueError(
-            f"Cannot generate lockfile with no requirements. Please add some requirements to {req.resolve_name}."
-        )
-
     if not req.interpreter_constraints:
         raise ValueError(
-            f"Cannot generate uv lockfile for {req.resolve_name} with no interpreter constraints. "
-            "Please set `interpreter_constraints` for this resolve."
+            f"Cannot generate uv lockfile for resolve {req.resolve_name} with no interpreter "
+            "constraints. Please set `interpreter_constraints` for this resolve."
         )
 
     resolve_config = await determine_resolve_config(
@@ -404,7 +399,7 @@ async def generate_uv_lockfile(
     # Rename uv.lock to the configured lockfile destination.
     uv_lock_contents = await get_digest_contents(result.output_digest)
     uv_lock_digest = await create_digest(
-        CreateDigest([FileContent(req.lockfile_dest, uv_lock_contents[0].content)])
+        CreateDigest([FileContent(req.lockfile_dest, next(iter(uv_lock_contents)).content)])
     )
 
     regenerate_command = (
@@ -431,7 +426,7 @@ async def generate_uv_lockfile(
         lock_style="universal",
         complete_platforms=(),
         uploaded_prior_to=resolve_config.uploaded_prior_to,
-        lockfile_format=LockfileFormat.Uv,
+        lockfile_format=LockfileFormat.UV,
         resolve=req.resolve_name,
     )
     metadata_digest = await create_digest(
@@ -448,7 +443,7 @@ async def generate_uv_lockfile(
 
     if req.diff:
         diff = await _generate_lockfile_diff(
-            final_lockfile_digest, req.resolve_name, req.lockfile_dest, LockfileFormat.Uv
+            final_lockfile_digest, req.resolve_name, req.lockfile_dest, LockfileFormat.UV
         )
     else:
         diff = None

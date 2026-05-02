@@ -323,7 +323,8 @@ def generate(
     ]
 
     if dry_run:
-        logger.info("Would run: " + " ".join(repr(arg) for arg in args) + f" in {buildroot}")
+        cmd = " ".join(repr(arg) for arg in args)
+        logger.info(f"Would run: `{cmd}` in {buildroot}")
         return
 
     # If there is a pre-existing lockfile, seed it so we get the pretty lockfile diff

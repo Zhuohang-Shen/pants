@@ -263,18 +263,18 @@ async def load_lockfile(
     # If this is a uv lockfile then its metadata will have told us so, otherwise fall back
     # to detection (since older lockfiles may not have the format field in the metadata).
     lockfile_format = lockfile_format or (
-        LockfileFormat.Pex
+        LockfileFormat.PEX
         if is_probably_pex_json_lockfile(lock_bytes)
-        else LockfileFormat.ConstraintsDeprecated
+        else LockfileFormat.CONSTRAINTS_DEPRECATED
     )
 
-    if lockfile_format == LockfileFormat.ConstraintsDeprecated:
+    if lockfile_format == LockfileFormat.CONSTRAINTS_DEPRECATED:
         lock_string = lock_bytes.decode()
         constraints_strings = FrozenOrderedSet(
             str(req) for req in parse_requirements_file(lock_string, rel_path=lockfile_path)
         )
 
-    if lockfile_format == LockfileFormat.Pex:
+    if lockfile_format == LockfileFormat.PEX:
         stripped_lock_bytes = strip_comments_from_pex_json_lockfile(lock_bytes)
         lockfile_digest = await create_digest(
             CreateDigest([FileContent(lockfile_path, stripped_lock_bytes)])
@@ -282,7 +282,7 @@ async def load_lockfile(
 
     if not metadata and python_setup.invalid_lockfile_behavior != InvalidLockfileBehavior.ignore:
         # uv lockfiles must have sidecar metadata, so this can only be Pex or ConstraintsDeprecated.
-        header_delimiter = "//" if lockfile_format == LockfileFormat.Pex else "#"
+        header_delimiter = "//" if lockfile_format == LockfileFormat.PEX else "#"
         metadata = get_metadata(
             python_setup,
             lock_bytes,
@@ -292,7 +292,7 @@ async def load_lockfile(
         )
 
     match lockfile_format:
-        case LockfileFormat.Uv:
+        case LockfileFormat.UV:
             # Use the virtual root package's direct dependencies as a rough estimate
             # of how many packages need resolving.
             # NB: The uv project recommends not relying on lockfile internals, but
@@ -315,9 +315,9 @@ async def load_lockfile(
                     "this warning."
                 )
             requirement_estimate = 4 if deps is None else len(deps)
-        case LockfileFormat.Pex:
+        case LockfileFormat.PEX:
             requirement_estimate = _pex_lockfile_requirement_count(lock_bytes)
-        case LockfileFormat.ConstraintsDeprecated:
+        case LockfileFormat.CONSTRAINTS_DEPRECATED:
             # Note: this is a very naive heuristic. It will overcount because entries often
             # have >1 line due to `--hash`.
             requirement_estimate = len(lock_bytes.splitlines())

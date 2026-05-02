@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shlex
@@ -26,6 +27,7 @@ from pants.backend.python.util_rules.pex_environment import PythonExecutable
 from pants.backend.python.util_rules.pex_requirements import (
     LoadedLockfile,
 )
+from pants.base.build_root import BuildRoot
 from pants.core.util_rules import system_binaries
 from pants.core.util_rules.subprocess_environment import SubprocessEnvironmentVars
 from pants.core.util_rules.system_binaries import BashBinary, RealpathBinary
@@ -139,9 +141,10 @@ async def create_venv_repository_from_uv_lockfile(
     uv_env: UvEnvironment,
     bash_binary: BashBinary,
     realpath_binary: RealpathBinary,
+    buildroot: BuildRoot,
 ) -> VenvRepository:
     """Install all packages from a uv lockfile into a virtualenv."""
-    if request.lockfile.lockfile_format != LockfileFormat.Uv:
+    if request.lockfile.lockfile_format != LockfileFormat.UV:
         raise ValueError(f"Expected a uv lockfile, got {request.lockfile.lockfile_format}")
     if request.lockfile.metadata is None:
         raise ValueError(
@@ -187,11 +190,14 @@ async def create_venv_repository_from_uv_lockfile(
         )
     )
 
+    buildroot_entropy = hashlib.sha256(buildroot.path.encode()).hexdigest()
     venv_repository = VenvRepository(
-        # We maintain one cached venv per interpreter+resolve. uv will efficiently incrementally
+        # We maintain one cached venv per buildroot+interpreter+resolve. uv will efficiently incrementally
         # update the venv as the lockfile changes, and will handle concurrency of `uv sync` with
         # appropriate locking.
-        venv_path_suffix=os.path.join(metadata.resolve, request.python.fingerprint)
+        venv_path_suffix=os.path.join(
+            buildroot_entropy, metadata.resolve, request.python.fingerprint
+        )
     )
 
     uv_cmd = shlex.join(

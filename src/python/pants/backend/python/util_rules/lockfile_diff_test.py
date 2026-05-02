@@ -18,7 +18,7 @@ from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, QueryRule, RuleRunn
 @rule
 async def helper_fixture(result: GenerateLockfileResult) -> LockfileDiff:
     return await _generate_lockfile_diff(
-        result.digest, result.resolve_name, result.path, LockfileFormat.Pex
+        result.digest, result.resolve_name, result.path, LockfileFormat.PEX
     )
 
 

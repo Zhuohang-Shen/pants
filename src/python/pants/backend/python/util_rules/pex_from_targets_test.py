@@ -173,11 +173,11 @@ def test_determine_requirements_for_pex_from_targets() -> None:
     global_requirement_constraints = ["constraint1", "constraint2"]
 
     resolve__pex = Resolve("pex", False)
-    loaded_lockfile__pex = Mock(lockfile_format=LockfileFormat.Pex, as_constraints_strings=None)
+    loaded_lockfile__pex = Mock(lockfile_format=LockfileFormat.PEX, as_constraints_strings=None)
     chosen_resolve__pex = Mock(lockfile=Mock())
     chosen_resolve__pex.name = "pex"  # name has special meaning in Mock(), so must set it here.
     loaded_lockfile__not_pex = Mock(
-        lockfile_format=LockfileFormat.ConstraintsDeprecated, as_constraints_strings=req_strings
+        lockfile_format=LockfileFormat.CONSTRAINTS_DEPRECATED, as_constraints_strings=req_strings
     )
     chosen_resolve__not_pex = Mock(lockfile=Mock())
     chosen_resolve__not_pex.name = "not_pex"  # ditto.

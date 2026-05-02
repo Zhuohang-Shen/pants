@@ -47,7 +47,7 @@ def test_metadata_json_round_trip() -> None:
         lock_style="universal",
         complete_platforms=(),
         uploaded_prior_to=None,
-        lockfile_format=LockfileFormat.Pex,
+        lockfile_format=LockfileFormat.PEX,
         resolve="resolve_name",
     )
     output_metadata = PythonLockfileMetadata.from_json_dict(
@@ -72,7 +72,7 @@ def test_metadata_header_round_trip() -> None:
         lock_style="universal",
         complete_platforms=(),
         uploaded_prior_to=None,
-        lockfile_format=LockfileFormat.Pex,
+        lockfile_format=LockfileFormat.PEX,
         resolve="resolve_name",
     )
     serialized_lockfile = input_metadata.add_header_to_lockfile(

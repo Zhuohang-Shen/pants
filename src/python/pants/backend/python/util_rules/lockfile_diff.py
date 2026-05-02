@@ -97,16 +97,16 @@ def _parse_lockfile_packages(
     """Parse the packages from lockfile content according to its format."""
     try:
         match lockfile_format:
-            case LockfileFormat.Pex:
+            case LockfileFormat.PEX:
                 # strip_comments_from_pex_json_lockfile is idempotent, so safe to call on
                 # already-stripped content (e.g. when content was loaded via load_lockfile).
                 stripped = strip_comments_from_pex_json_lockfile(content)
                 data = FrozenDict.deep_freeze(json.loads(stripped))
                 return _pex_lockfile_requirements(data, path)
-            case LockfileFormat.Uv:
+            case LockfileFormat.UV:
                 data = FrozenDict.deep_freeze(tomllib.loads(content.decode()))
                 return _uv_lockfile_requirements(data, path)
-            case LockfileFormat.ConstraintsDeprecated:
+            case LockfileFormat.CONSTRAINTS_DEPRECATED:
                 # These can't meaningfully be diffed.
                 return LockfilePackages({})
             case _:

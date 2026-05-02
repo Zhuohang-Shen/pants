@@ -105,7 +105,7 @@ def test_validate_pytest_cov_included(entire_lockfile: bool) -> None:
             no_binary=set(),
         )
         loaded_lockfile = LoadedLockfile(
-            EMPTY_DIGEST, "", metadata, 0, LockfileFormat.Pex, None, lockfile
+            EMPTY_DIGEST, "", metadata, 0, LockfileFormat.PEX, None, lockfile
         )
         run_rule_with_mocks(
             validate_pytest_cov_included,

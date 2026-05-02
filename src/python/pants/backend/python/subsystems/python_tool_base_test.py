@@ -56,7 +56,7 @@ def test_get_lockfile_metadata() -> None:
     )
     lockfile = Lockfile("dummy_url", "dummy_description_of_origin", "dummy_resolve")
     loaded_lockfile = LoadedLockfile(
-        EMPTY_DIGEST, "", metadata, 0, LockfileFormat.Pex, None, lockfile
+        EMPTY_DIGEST, "", metadata, 0, LockfileFormat.PEX, None, lockfile
     )
     assert (
         run_rule_with_mocks(

@@ -572,8 +572,8 @@ async def _determine_requirements_for_pex_from_targets(
             LoadedLockfileRequest(chosen_resolve.lockfile), **implicitly()
         )
         pex_native_subsetting_supported = loaded_lockfile.lockfile_format in (
-            LockfileFormat.Pex,
-            LockfileFormat.Uv,
+            LockfileFormat.PEX,
+            LockfileFormat.UV,
         )
         if loaded_lockfile.as_constraints_strings:
             requirements = dataclasses.replace(
