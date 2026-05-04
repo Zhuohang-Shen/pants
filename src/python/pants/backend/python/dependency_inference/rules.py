@@ -15,10 +15,12 @@ from pants.backend.python.dependency_inference.default_unowned_dependencies impo
     DEFAULT_UNOWNED_DEPENDENCIES,
 )
 from pants.backend.python.dependency_inference.module_mapper import (
+    AllPythonTargets,
     PythonModuleOwners,
     PythonModuleOwnersRequest,
     ResolveName,
     map_module_to_address,
+    module_from_stripped_path,
 )
 from pants.backend.python.dependency_inference.parse_python_dependencies import (
     ParsedPythonAssetPaths,
@@ -46,7 +48,7 @@ from pants.backend.python.util_rules import ancestor_files, pex
 from pants.backend.python.util_rules.ancestor_files import AncestorFilesRequest, find_ancestor_files
 from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
 from pants.core import target_types
-from pants.core.target_types import AllAssetTargetsByPath, map_assets_by_path
+from pants.core.target_types import AllAssetTargetsByPath, DeletedSources, map_assets_by_path
 from pants.core.util_rules import stripped_source_files
 from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.core.util_rules.unowned_dependency_behavior import (
@@ -54,6 +56,7 @@ from pants.core.util_rules.unowned_dependency_behavior import (
     UnownedDependencyUsage,
 )
 from pants.engine.addresses import Address, Addresses
+from pants.engine.internals.build_files import DELETED_ADDRESS
 from pants.engine.internals.graph import (
     OwnersRequest,
     determine_explicitly_provided_dependencies,
@@ -69,7 +72,12 @@ from pants.engine.target import (
     InferredDependencies,
 )
 from pants.engine.unions import UnionRule
-from pants.source.source_root import SourceRootRequest, get_source_root
+from pants.source.source_root import (
+    SourceRootRequest,
+    SourceRootsRequest,
+    get_source_root,
+    get_source_roots,
+)
 from pants.util.docutil import doc_url
 from pants.util.strutil import bullet_list, softwrap
 
@@ -461,6 +469,7 @@ async def infer_python_dependencies_via_source(
     request: InferPythonImportDependencies,
     python_infer_subsystem: PythonInferSubsystem,
     python_setup: PythonSetup,
+    all_python_targets: AllPythonTargets,
 ) -> InferredDependencies:
     if not python_infer_subsystem.imports and not python_infer_subsystem.assets:
         return InferredDependencies([])
@@ -490,6 +499,35 @@ async def infer_python_dependencies_via_source(
         parsed_dependencies.imports,
         resolve=resolve,
     )
+
+    if unowned_imports:
+        # Let's see if any of the unowned imports were provided by a deleted file.
+        deleted_python_files = (
+            tuple(
+                f
+                for f in (all_python_targets.deleted.get(DeletedSources).value or [])
+                if f.endswith((".py", ".pyi"))
+            )
+            if all_python_targets.deleted
+            else tuple()
+        )
+        if deleted_python_files:
+            source_roots_result = await get_source_roots(
+                SourceRootsRequest.for_files(deleted_python_files)
+            )
+            stripped_deleted_python_files = tuple(
+                f.relative_to(root.path) for f, root in source_roots_result.path_to_root.items()
+            )
+            deleted_modules = tuple(
+                module_from_stripped_path(f) for f in stripped_deleted_python_files
+            )
+            for impt in unowned_imports:
+                for mod in deleted_modules:
+                    if impt == mod or (impt.startswith(mod) and impt[len(mod)] == "."):
+                        # At least one unowned import was provided by a deleted file, so we
+                        # inject a dep on the DeletedTarget pseudo-target.
+                        inferred_deps = frozenset(inferred_deps | {DELETED_ADDRESS})
+                        break
 
     return InferredDependencies(sorted(inferred_deps))
 
