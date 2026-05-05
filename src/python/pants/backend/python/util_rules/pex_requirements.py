@@ -525,14 +525,20 @@ class ResolveConfig:
     def validate_for_uv(self, resolve_name: str) -> None:
         """Raise if any pex-specific resolve options are set that have no uv equivalent."""
         pex_specific: list[str] = []
+        if self.manylinux:
+            pex_specific.append("`[python].resolves_to_constraints_file`")
         if self.constraints_file:
             pex_specific.append("`[python].resolves_to_constraints_file`")
         if self.complete_platforms:
             pex_specific.append("`[python].resolves_to_complete_platforms`")
         if self.excludes:
             pex_specific.append("`[python].resolves_to_excludes`")
+        if self.overrides:
+            pex_specific.append("`[python].resolves_to_overrides`")
         if self.sources:
             pex_specific.append("`[python].resolves_to_sources`")
+        if self.lock_style != "universal":
+            pex_specific.append("`[python]._resolves_to_lock_style`")
         if self.path_mappings:
             pex_specific.append("`[python-repos].path_mappings`")
         if pex_specific:

@@ -84,7 +84,7 @@ def _uv_lockfile_requirements(
             # Skip the synthetic virtual package, it's not interesting in diffs.
             if version is not None and not name.startswith("pants-lockfile-for-"):
                 requirements[PackageName(name)] = PythonRequirementVersion.parse(version)
-        except (KeyError, Exception) as e:
+        except Exception as e:
             if path:
                 logger.warning(f"{path}: Failed to parse package entry in lockfile: {e}")
 
