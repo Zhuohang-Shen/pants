@@ -106,7 +106,7 @@ class Platform(Enum):
 
 
 GITHUB_HOSTED = {Platform.LINUX_X86_64, Platform.MACOS14_ARM64}
-SELF_HOSTED = {Platform.LINUX_ARM64}
+SELF_HOSTED = {}
 
 # We don't specify a patch version so that we get the latest, which comes pre-installed:
 #  https://github.com/actions/setup-python#available-versions-of-python
@@ -115,10 +115,9 @@ _BASE_PYTHON_VERSIONS = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3
 
 PYTHON_VERSIONS_PER_PLATFORM = {
     Platform.LINUX_X86_64: _BASE_PYTHON_VERSIONS,
+    Platform.LINUX_ARM64: _BASE_PYTHON_VERSIONS,
     # Python 3.7 or 3.8 aren't supported directly on arm64 macOS
     Platform.MACOS14_ARM64: [v for v in _BASE_PYTHON_VERSIONS if v not in ("3.7", "3.8")],
-    # These runners have Python already installed
-    Platform.LINUX_ARM64: None,
 }
 
 
@@ -485,14 +484,15 @@ class Helper:
         if self.platform == Platform.MACOS14_ARM64:
             ret += ["depot-macos-14"]
         elif self.platform == Platform.LINUX_X86_64:
-            ret += ["depot-ubuntu-22.04"]
+            ret += ["depot-ubuntu-22.04-8"]
         elif self.platform == Platform.LINUX_ARM64:
-            ret += [
-                "runs-on",
-                "runner=4cpu-linux-arm64",
-                "image=ubuntu22-full-arm64-python3.7-3.13",
-                "run-id=${{ github.run_id }}",
-            ]
+            ret += ["depot-ubuntu-24.04-arm-8"]
+            # ret += [
+            #     "runs-on",
+            #     "runner=4cpu-linux-arm64",
+            #     "image=ubuntu22-full-arm64-python3.7-3.13",
+            #     "run-id=${{ github.run_id }}",
+            # ]
         elif self.platform == Platform.WINDOWS11_X86_64:
             ret += ["windows-2025-vs2026"]
         else:
