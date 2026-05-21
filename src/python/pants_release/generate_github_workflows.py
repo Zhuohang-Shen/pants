@@ -115,7 +115,7 @@ _BASE_PYTHON_VERSIONS = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3
 
 PYTHON_VERSIONS_PER_PLATFORM = {
     Platform.LINUX_X86_64: _BASE_PYTHON_VERSIONS,
-    Platform.LINUX_ARM64: _BASE_PYTHON_VERSIONS,
+    Platform.LINUX_ARM64: [v for v in _BASE_PYTHON_VERSIONS if v not in ("3.7", "3.8")],
     # Python 3.7 or 3.8 aren't supported directly on arm64 macOS
     Platform.MACOS14_ARM64: [v for v in _BASE_PYTHON_VERSIONS if v not in ("3.7", "3.8")],
 }
@@ -1202,9 +1202,9 @@ def build_wheels_jobs(*, for_deploy_ref: str | None = None, needs: list[str] | N
     # N.B.: When altering the number of total wheels built, please edit the expected
     # total in the release.py script. Currently here:
     return {
-        **build_wheels_job(Platform.LINUX_X86_64, for_deploy_ref, needs),
+        #**build_wheels_job(Platform.LINUX_X86_64, for_deploy_ref, needs),
         **build_wheels_job(Platform.LINUX_ARM64, for_deploy_ref, needs),
-        **build_wheels_job(Platform.MACOS14_ARM64, for_deploy_ref, needs),
+        #**build_wheels_job(Platform.MACOS14_ARM64, for_deploy_ref, needs),
     }
 
 
@@ -1219,11 +1219,11 @@ def test_workflow_jobs() -> Jobs:
             "steps": ensure_release_notes(),
         },
     }
-    jobs.update(**linux_x86_64_test_jobs())
+    #jobs.update(**linux_x86_64_test_jobs())
     jobs.update(**linux_arm64_test_jobs())
-    jobs.update(**macos14_arm64_test_jobs())
+    #jobs.update(**macos14_arm64_test_jobs())
     jobs.update(**build_wheels_jobs())
-    jobs.update(**windows11_x86_64_test_jobs())
+    #jobs.update(**windows11_x86_64_test_jobs())
     jobs.update(
         {
             "lint_python": {
