@@ -567,8 +567,6 @@ class ResolveConfig:
         pex_specific: list[str] = []
         if self.constraints_file:
             pex_specific.append("`[python].resolves_to_constraints_file`")
-        if self.complete_platforms:
-            pex_specific.append("`[python].resolves_to_complete_platforms`")
         if self.excludes:
             pex_specific.append("`[python].resolves_to_excludes`")
         if self.overrides:

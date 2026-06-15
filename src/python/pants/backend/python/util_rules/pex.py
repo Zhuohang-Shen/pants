@@ -101,6 +101,7 @@ from pants.engine.intrinsics import (
     add_prefix,
     create_digest,
     digest_to_snapshot,
+    get_digest_contents,
     merge_digests,
     remove_prefix,
 )
@@ -624,7 +625,10 @@ async def _setup_pex_requirements(
             # uv support being tacked on later. Fixing this will require a bit more of a
             # refactor than we want to do right now.
             return _BuildPexRequirementsSetup(
-                [], [], loaded_lockfile.requirement_estimate, uv_lockfile=loaded_lockfile
+                [],
+                [],
+                loaded_lockfile.requirement_estimate,
+                uv_lockfile=loaded_lockfile,
             )
 
         argv = (
@@ -791,37 +795,61 @@ async def build_pex(
         )
         req_strings = ()
 
-    venv_repo: VenvRepository | None = None
+    venv_repos: list[VenvRepository] = []
     if requirements_setup.uv_lockfile is not None:
-        if request.platforms or request.complete_platforms:
-            # TODO: Support this via multiple --venv-repository venvs.
+        if request.platforms:
             raise ValueError(
                 softwrap(
                     f"""
-                    Cannot build a cross-platform PEX from a uv lockfile for
-                    {request.output_filename}.
+                    Cannot build a cross-platform PEX from a uv lockfile using pex platform
+                    strings for {request.output_filename}. Use
+                    `[python].resolves_to_complete_platforms` instead.
                     """
                 )
             )
 
-        if pex_python_setup.python is None:
-            # Should never happen.
-            raise ValueError(
-                softwrap(
-                    f"""
-                    Cannot build a pex from a uv lockfile  for {request.output_filename} with no
-                    local python specified. Please report this error to the Pants team.
-                    """
+        if request.complete_platforms:
+            # Multiplatform build: one uv venv per complete_platform, driven by the JSON
+            # content (which provides the uv --python-platform string and Python version).
+            # pex_python_setup.argv already contains the --complete-platform args that tell
+            # pex about each target platform; we add --venv-repository for each venv so pex
+            # can pick the right pre-installed wheels for each platform.
+            complete_platform_contents = await get_digest_contents(
+                request.complete_platforms.digest
+            )
+            venv_repos = list(
+                await concurrently(
+                    create_venv_repository_from_uv_lockfile(
+                        VenvFromUvLockfileRequest(
+                            lockfile=requirements_setup.uv_lockfile,
+                            complete_platform_json=fc.content.decode(),
+                        ),
+                        **implicitly(),
+                    )
+                    for fc in complete_platform_contents
                 )
             )
-
-        venv_repo = await create_venv_repository_from_uv_lockfile(
-            VenvFromUvLockfileRequest(
-                lockfile=requirements_setup.uv_lockfile,
-                python=pex_python_setup.python,
-            ),
-            **implicitly(),
-        )
+        else:
+            # Single local-platform build.
+            if pex_python_setup.python is None:
+                # Should never happen.
+                raise ValueError(
+                    softwrap(
+                        f"""
+                        Cannot build a pex from a uv lockfile for {request.output_filename}
+                        with no local python specified. Please report this error to the Pants team.
+                        """
+                    )
+                )
+            venv_repos = [
+                await create_venv_repository_from_uv_lockfile(
+                    VenvFromUvLockfileRequest(
+                        lockfile=requirements_setup.uv_lockfile,
+                        python=pex_python_setup.python,
+                    ),
+                    **implicitly(),
+                )
+            ]
 
         # This is where we add the argv for the uv case (as explained above).
         requirements_setup = dataclasses.replace(
@@ -831,7 +859,7 @@ async def build_pex(
                 # default to all the distributions in the venv-repository.
                 *req_strings,
                 "--no-transitive",
-                f"--venv-repository={venv_repo.relpath()}",
+                *(f"--venv-repository={venv_repo.relpath()}" for venv_repo in venv_repos),
                 # If uv decided there should be prereleases in the venv, we
                 # shouldn't refuse to resolve them.
                 "--pre",
@@ -858,17 +886,23 @@ async def build_pex(
         *request.additional_args,
     ]
 
-    if venv_repo is None:
+    if not venv_repos:
+        # Normal pex resolution: let pex_python_setup.argv drive platform selection
+        # (IC/interpreter args, or --complete-platform args).
         argv.extend(pex_python_setup.argv)
         interpreter = None
+    elif request.complete_platforms:
+        # Multiplatform uv build: pex infers the target platform from each venv-repository,
+        # so we don't pass --complete-platform. No specific interpreter needed.
+        interpreter = None
     else:
-        # When using --venv-repository the interpreter is fixed to the venv's Python;
+        # Single local-platform uv build: the interpreter is fixed to the venv's Python;
         # PEX does not accept --python / --interpreter-constraint in this case.
         # TODO: This type name is misleading here: this isn't a PBS (or at least not one we
         #  downloaded as such), but PythonBuildStandaloneBinary is just a wrapper for
         #  a path to an interpreter, so we use it as such.  But we should probably rename the type.
         interpreter = PythonBuildStandaloneBinary(
-            os.path.join(venv_repo.relpath(), "bin", "python")
+            os.path.join(venv_repos[0].relpath(), "bin", "python")
         )
 
     if request.main is not None:
@@ -925,7 +959,7 @@ async def build_pex(
             extra_args=argv,
             additional_input_digest=merged_digest,
             description=_build_pex_description(request, req_strings, python_setup.resolves),
-            append_only_caches=venv_repo.append_only_caches() if venv_repo else None,
+            append_only_caches=venv_repos[0].append_only_caches() if venv_repos else None,
             output_files=None,
             output_directories=[output_chroot],
             concurrency_available=requirements_setup.concurrency_available,
@@ -934,9 +968,9 @@ async def build_pex(
         **implicitly(),
     )
 
-    if venv_repo:
+    if venv_repos:
         composite_process = CompositeProcess.from_process(pex_process).prepend_subprocesses(
-            [venv_repo.creation_subprocess]
+            [venv_repo.creation_subprocess for venv_repo in venv_repos]
         )
         pex_process = await composite_process_to_process(composite_process, **implicitly())
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shlex
@@ -52,12 +53,150 @@ from pants.util.strutil import softwrap
 logger = logging.getLogger(__name__)
 
 
+_UV_PLATFORM_MAP = {
+    ("Linux", "x86_64"): "x86_64-unknown-linux-gnu",
+    ("Linux", "aarch64"): "aarch64-unknown-linux-gnu",
+    ("Darwin", "x86_64"): "x86_64-apple-darwin",
+    ("Darwin", "aarch64"): "aarch64-apple-darwin",
+    ("Windows", "x86_64"): "x86_64-pc-windows-msvc",
+    ("Windows", "aarch64"): "aarch64-pc-windows-msvc",
+}
+
+
+def uv_platform_from_complete_platform(json_str: str) -> tuple[str, str]:
+    """Derive a uv --python-platform string and Python version from a complete_platform JSON.
+
+    Returns (uv_platform, python_version), e.g. ("x86_64-unknown-linux-gnu", "3.12").
+
+    Supports two complete_platform formats:
+    - The newer format from `pex3 interpreter inspect --markers --tags`, which includes a
+      `marker_environment` field with explicit platform_system, platform_machine, python_version.
+    - The simpler format (e.g. used in Pants' built-in AWS Lambda/GCF platform files) which
+      includes only a `compatible_tags` list like ["cp312-cp312-manylinux_2_17_x86_64", ...].
+    """
+    data = json.loads(json_str)
+
+    if "marker_environment" in data:
+        env = data["marker_environment"]
+        system = env["platform_system"]  # "Linux", "Darwin", "Windows"
+        machine = env["platform_machine"]  # "x86_64", "aarch64", "arm64"
+        python_version = env["python_version"]  # e.g. "3.12"
+        # macOS reports "arm64"; uv uses "aarch64".
+        if machine == "arm64":
+            machine = "aarch64"
+    elif "compatible_tags" in data:
+        system, machine, python_version = _parse_platform_from_compatible_tags(
+            data["compatible_tags"]
+        )
+    else:
+        raise ValueError(
+            softwrap(
+                """
+                Cannot derive a uv platform string from complete_platform: the JSON must contain
+                either a 'marker_environment' or 'compatible_tags' field.
+                """
+            )
+        )
+
+    key = (system, machine)
+    if key not in _UV_PLATFORM_MAP:
+        raise ValueError(
+            softwrap(
+                f"""
+                Cannot derive a uv platform string from complete_platform with
+                platform_system={system!r}, platform_machine={machine!r}.
+                Supported combinations: {sorted(_UV_PLATFORM_MAP)}.
+                """
+            )
+        )
+    return _UV_PLATFORM_MAP[key], python_version
+
+
+def _parse_platform_from_compatible_tags(tags: list[str]) -> tuple[str, str, str]:
+    """Parse (system, machine, python_version) from a pex compatible_tags list.
+
+    Tags are in the format "interpreter-abi-platform", e.g. "cp312-cp312-manylinux_2_17_x86_64".
+    """
+    for tag in tags:
+        parts = tag.split("-")
+        if len(parts) != 3:
+            continue
+        interp, _abi, plat = parts
+        if plat == "any":
+            continue
+
+        # Extract Python version from interpreter like "cp312" -> "3.12".
+        if interp.startswith("cp") and len(interp) > 2 and interp[2:].isdigit():
+            digits = interp[2:]
+            python_version = f"{digits[0]}.{digits[1:]}"
+        else:
+            continue
+
+        # Parse OS and architecture from platform string.
+        # Architecture may itself contain underscores (e.g. x86_64), so we cannot simply
+        # rsplit("_", 1). Instead we strip the OS prefix and rejoin the remaining parts.
+        plat_parts = plat.split("_")
+        if plat.startswith("manylinux"):
+            # e.g. manylinux_2_17_x86_64 -> parts[3:] = ["x86", "64"] -> "x86_64"
+            #      manylinux2014_x86_64   -> parts[1:] = ["x86", "64"] -> "x86_64"
+            #      manylinux_2_17_aarch64 -> parts[3:] = ["aarch64"]  -> "aarch64"
+            if plat.startswith("manylinux_"):
+                # New-style (PEP 600): manylinux_MAJOR_MINOR_ARCH
+                machine = "_".join(plat_parts[3:])
+            else:
+                # Old-style: manylinux<GLIBC>_ARCH (e.g. manylinux2014_x86_64)
+                machine = "_".join(plat_parts[1:])
+            system = "Linux"
+        elif plat.startswith("linux"):
+            # e.g. linux_x86_64 -> parts[1:] = ["x86", "64"] -> "x86_64"
+            machine = "_".join(plat_parts[1:])
+            system = "Linux"
+        elif plat.startswith("macosx"):
+            # e.g. macosx_14_0_arm64 -> parts[-1] = "arm64"
+            #      macosx_11_0_x86_64 -> parts[-2:] = ["x86", "64"] -> "x86_64"
+            # arm64 and aarch64 are single tokens; x86_64 is two parts.
+            raw_arch = "_".join(plat_parts[3:])
+            machine = "aarch64" if raw_arch == "arm64" else raw_arch
+            system = "Darwin"
+        elif plat.startswith("win"):
+            # e.g. win_amd64, win_arm64
+            system = "Windows"
+            if "amd64" in plat:
+                machine = "x86_64"
+            elif "arm64" in plat:
+                machine = "aarch64"
+            else:
+                continue
+        else:
+            continue
+
+        return system, machine, python_version
+
+    raise ValueError(
+        softwrap(
+            f"""
+            Cannot derive platform from compatible_tags: no recognizable platform-specific tag
+            found in the first entries: {tags[:5]}.
+            """
+        )
+    )
+
+
 @dataclass(frozen=True)
 class VenvFromUvLockfileRequest:
     """Request to install all packages from a uv lockfile into a virtualenv."""
 
     lockfile: LoadedLockfile
-    python: PythonExecutable
+    # Used for local-platform builds (no complete_platform_json).
+    python: PythonExecutable | None = None
+    # When set, install wheels for the platform described by this complete_platform JSON
+    # (as produced by `pex3 interpreter inspect --markers --tags`) instead of the local one.
+    # The Python version and target OS/arch are both derived from the JSON.
+    complete_platform_json: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.python is None and self.complete_platform_json is None:
+            raise ValueError("Either python or complete_platform_json must be set.")
 
 
 @dataclass(frozen=True)
@@ -161,6 +300,11 @@ async def create_venv_repository_from_uv_lockfile(
         )
     metadata: PythonLockfileMetadataV8 = cast(PythonLockfileMetadataV8, request.lockfile.metadata)
 
+    # We maintain one cached venv per buildroot+resolve+interpreter-or-platform. uv will
+    # efficiently incrementally update the venv as the lockfile changes, and will handle
+    # concurrency of `uv sync` with appropriate locking.
+    buildroot_entropy = hashlib.sha256(buildroot.path.encode()).hexdigest()
+
     pyproject_content = generate_pyproject_toml(
         metadata.resolve,
         metadata.valid_for_interpreter_constraints,
@@ -193,11 +337,26 @@ async def create_venv_repository_from_uv_lockfile(
         )
     )
 
-    # We maintain one cached venv per buildroot+interpreter+resolve. uv will efficiently
-    # incrementally update the venv as the lockfile changes, and will handle concurrency of
-    # `uv sync` with appropriate locking.
-    buildroot_entropy = hashlib.sha256(buildroot.path.encode()).hexdigest()
-    venv_path_suffix = os.path.join(buildroot_entropy, metadata.resolve, request.python.fingerprint)
+    if request.complete_platform_json is not None:
+        uv_platform, python_version = uv_platform_from_complete_platform(
+            request.complete_platform_json
+        )
+        # Key the venv by a hash of the complete_platform JSON so each distinct target
+        # platform gets its own cache entry.
+        platform_key = hashlib.sha256(request.complete_platform_json.encode()).hexdigest()[:16]
+        venv_path_suffix = os.path.join(buildroot_entropy, metadata.resolve, platform_key)
+        python_args: tuple[str, ...] = (
+            "--python",
+            python_version,
+            "--python-platform",
+            uv_platform,
+        )
+    else:
+        assert request.python is not None
+        venv_path_suffix = os.path.join(
+            buildroot_entropy, metadata.resolve, request.python.fingerprint
+        )
+        python_args = ("--python", request.python.path)
 
     uv_cmd = shlex.join(
         (
@@ -208,8 +367,7 @@ async def create_venv_repository_from_uv_lockfile(
             # TODO: extras can conflict, so we might need to be more selective.
             "--all-extras",
             "--no-progress",
-            "--python",
-            request.python.path,
+            *python_args,
         )
     )
     # We use `realpath` to resolve the named cache symlink to an absolute path in whatever
