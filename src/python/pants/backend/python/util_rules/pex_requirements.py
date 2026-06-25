@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from packaging.requirements import Requirement
-
 from pants.backend.python.subsystems.repos import PythonRepos
 from pants.backend.python.subsystems.setup import InvalidLockfileBehavior, PythonSetup
 from pants.backend.python.target_types import PythonRequirementsField
@@ -496,16 +494,6 @@ class ResolveConfig:
             for fl in all_find_links:
                 config_lines.append(f'    "{fl}",')
             config_lines.append("]")
-            config_lines.append("")
-
-        if self.sources:
-            config_lines.append("[sources]")
-            for source in self.sources:
-                index_name, _, scope = source.partition("=")
-                req = Requirement(scope)
-                # Markers may contain double-quotes, so we use single quotes in the TOML.
-                marker = f", marker = '{req.marker}'" if req.marker else ""
-                config_lines.append(f'{req.name} = {{ index = "{index_name}"{marker} }}')
             config_lines.append("")
 
         if self.no_binary:

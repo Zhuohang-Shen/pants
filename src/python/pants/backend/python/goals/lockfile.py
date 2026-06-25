@@ -353,7 +353,7 @@ async def generate_uv_lockfile(
     resolve_config.validate_for_uv(req.resolve_name)
 
     pyproject_content = generate_pyproject_toml(
-        req.resolve_name, req.interpreter_constraints, req.requirements
+        req.resolve_name, req.interpreter_constraints, req.requirements, resolve_config.sources
     )
 
     if generate_lockfiles_subsystem.sync:
