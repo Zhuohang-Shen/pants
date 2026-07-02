@@ -58,7 +58,6 @@ pex_binary(
     scie_name_style="dynamic",
     # The native code engine is per platform
     scie_platform=["current"],
-    scie_pbs_stripped=True,
     scie_hash_alg="sha256",
     scie_pex_entrypoint_env_passthrough=True,
     scie_load_dotenv=True,
@@ -67,6 +66,7 @@ pex_binary(
     scie_bind_resource_path=["PANTS_NATIVE_CLIENT=pants/bin/native_client"],
     scie_exe="{scie.env.PANTS_NATIVE_CLIENT}",
     scie_env=["NO_SCIE_WARNING=true", "_PANTS_SERVER_EXE={scie.env.VIRTUAL_ENV}/bin/pants"],
+    scie_pbs_free_threaded=True,
 )
 
 # NB: we use `dummy.c` to avoid clang/gcc complaining `error: no input files` when building

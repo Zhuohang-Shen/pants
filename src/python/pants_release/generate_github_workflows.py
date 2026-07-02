@@ -108,7 +108,7 @@ class Platform(Enum):
 # We don't specify a patch version so that we get the latest, which comes pre-installed:
 #  https://github.com/actions/setup-python#available-versions-of-python
 # NOTE: The last entry becomes the default
-_BASE_PYTHON_VERSIONS = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+_BASE_PYTHON_VERSIONS = ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
 
 PYTHON_VERSIONS_PER_PLATFORM: dict[Platform, list[str]] = {
     Platform.LINUX_X86_64: _BASE_PYTHON_VERSIONS,
@@ -1097,7 +1097,7 @@ def build_wheels_job(
                             "run": dedent(
                                 """\
                                 PANTS_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import pants.version;print(pants.version.VERSION)")
-                                PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}')")
+                                PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}{sys.abiflags}')")
                                 PLAT=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import os;print(f'{os.uname().sysname.lower()}_{os.uname().machine.lower()}')")
                                 PEX_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT.pex
                                 PEX_SCIE_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT

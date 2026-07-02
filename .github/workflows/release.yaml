@@ -90,7 +90,7 @@ jobs:
       name: Rename the Pants Pex to its final name for upload
       run: |
         PANTS_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import pants.version;print(pants.version.VERSION)")
-        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}')")
+        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}{sys.abiflags}')")
         PLAT=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import os;print(f'{os.uname().sysname.lower()}_{os.uname().machine.lower()}')")
         PEX_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT.pex
         PEX_SCIE_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT
@@ -227,7 +227,7 @@ jobs:
       name: Rename the Pants Pex to its final name for upload
       run: |
         PANTS_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import pants.version;print(pants.version.VERSION)")
-        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}')")
+        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}{sys.abiflags}')")
         PLAT=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import os;print(f'{os.uname().sysname.lower()}_{os.uname().machine.lower()}')")
         PEX_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT.pex
         PEX_SCIE_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT
@@ -312,7 +312,7 @@ jobs:
       with:
         fetch-depth: 10
         ref: ${{ needs.release_info.outputs.build-ref }}
-    - name: Set up Python 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+    - name: Set up Python 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.14t
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: |-
@@ -322,6 +322,7 @@ jobs:
           3.12
           3.13
           3.14
+          3.14t
     - name: Install Protoc
       uses: benjyw/setup-protoc@fa4f90fddf8838036cbdeadf1262b9755f6cfb85
       with:
@@ -389,7 +390,7 @@ jobs:
       name: Rename the Pants Pex to its final name for upload
       run: |
         PANTS_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import pants.version;print(pants.version.VERSION)")
-        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}')")
+        PY_VER=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import sys;print(f'cp{sys.version_info[0]}{sys.version_info[1]}{sys.abiflags}')")
         PLAT=$(PEX_INTERPRETER=1 dist/src.python.pants/pants-pex.pex -c "import os;print(f'{os.uname().sysname.lower()}_{os.uname().machine.lower()}')")
         PEX_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT.pex
         PEX_SCIE_FILENAME=pants.$PANTS_VER-$PY_VER-$PLAT
@@ -445,7 +446,7 @@ jobs:
         fetch-depth: '0'
         fetch-tags: true
         ref: ${{ needs.release_info.outputs.build-ref }}
-    - name: Set up Python 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+    - name: Set up Python 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.14t
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: |-
@@ -457,6 +458,7 @@ jobs:
           3.12
           3.13
           3.14
+          3.14t
     - name: Install Protoc
       uses: benjyw/setup-protoc@fa4f90fddf8838036cbdeadf1262b9755f6cfb85
       with:
