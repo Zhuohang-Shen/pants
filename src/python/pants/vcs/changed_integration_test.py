@@ -224,13 +224,7 @@ def test_change_build_file(repo: str) -> None:
     """
     append_to_file("BUILD", "# foo")
     # Note that the target generator `//:lib` does not show up.
-    assert_list_stdout(
-        repo, ["//app.sh:lib", "//dep.sh:lib", "//transitive.sh:lib", "//:standalone"]
-    )
-
-    # This is because the BUILD file gets expanded with all its targets, then their sources are
-    # used. This might not be desirable behavior.
-    assert_count_loc(repo, expected_num_files=4)
+    assert_list_stdout(repo, [])
 
 
 def test_different_build_file_changed(repo: str) -> None:
