@@ -1313,8 +1313,8 @@ class BootstrapOptions:
             {cache_instructions}
             """
         ),
-        default=tempfile.gettempdir(),
-        default_help_repr="<tmp_dir>",
+        default=lambda _: os.path.join(get_buildroot(), ".pants.d", "workdir", "local_execution"),
+        default_help_repr="<<pants_workdir>/local_execution>",
     )
     local_cache = BoolOption(
         default=DEFAULT_EXECUTION_OPTIONS.local_cache,
