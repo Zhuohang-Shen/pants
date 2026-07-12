@@ -47,6 +47,7 @@ from pants.engine.intrinsics import (
     get_digest_contents,
     merge_digests,
 )
+from pants.engine.pants_lock import pants_lock_bin
 from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.util.docutil import bin_name
 from pants.util.frozendict import FrozenDict
@@ -246,10 +247,22 @@ async def create_venv_repository_from_uv_lockfile(
     # environment this process runs in. This gives uv a stable absolute path for the venv
     # so that any entry point scripts it creates exec a valid path that doesn't reference
     # the sandbox.
+    #
+    # uv claims that you can run sync concurrently on the same venv, but this relies on a
+    # lock on the workspace (not on the target venv), and since each sandbox is its own
+    # uv workspace, these locks don't exclude each other. So instead we use pants_lock
+    # to provide mutual exclusion on the venv.
+    pants_lock = pants_lock_bin()
     command = dedent(
         f"""\
         cache_root="$({realpath_binary.path} {shlex.quote(VenvRepository.cache_dir)})"
-        UV_PROJECT_ENVIRONMENT="${{cache_root}}/{venv_path_suffix}" {uv_cmd}
+        project_env="${{cache_root}}/{venv_path_suffix}"
+        lock_path="${{project_env}}.lock"
+        mkdir -p $(dirname "${{lock_path}}")
+        (
+          {pants_lock} 200
+          UV_PROJECT_ENVIRONMENT="${{project_env}}" {uv_cmd}
+        ) 200>"${{lock_path}}"
         """
     )
 
