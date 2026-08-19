@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 
 from pants.backend.python.subsystems.python_tool_base import PythonToolBase
 from pants.backend.python.subsystems.setup import PythonSetup
@@ -55,8 +56,13 @@ logger = logging.getLogger(__name__)
 # wins over a later one; but a closer directory always wins over a farther one, regardless of
 # which candidate filename it has). Used for both single, repo-root-only discovery (via
 # `MyPy.config_request`) and per-source-root hierarchical discovery (see `mypy/rules.py`).
-CONFIG_DISCOVERY_FILENAMES = ("mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg")
-CONFIG_DISCOVERY_CONTENT_CHECKS = FrozenDict(
+CONFIG_DISCOVERY_FILENAMES: Final[tuple[str, ...]] = (
+    "mypy.ini",
+    ".mypy.ini",
+    "pyproject.toml",
+    "setup.cfg",
+)
+CONFIG_DISCOVERY_CONTENT_CHECKS: Final[FrozenDict] = FrozenDict(
     {"pyproject.toml": b"[tool.mypy", "setup.cfg": b"[mypy"}
 )
 
@@ -117,7 +123,7 @@ class MyPy(PythonToolBase):
         advanced=True,
         help=lambda cls: softwrap(
             f"""
-            If true, Pants will include any relevant config files during runs
+            If true, Pants will use any relevant config files during runs
             (`mypy.ini`, `.mypy.ini`, `pyproject.toml`, and `setup.cfg`).
 
             Pants looks for a config file in each source root and its ancestor directories. For a
@@ -125,7 +131,8 @@ class MyPy(PythonToolBase):
             (including the source root itself), following mypy's file-preference order if multiple
             candidate config files exist in that directory.
 
-            Use `[{cls.options_scope}].config` instead if your config is in a non-standard location.
+            Use `[{cls.options_scope}].config` instead if you have a singular mypy config and it
+            is defined in a non-standard location.
             """
         ),
     )

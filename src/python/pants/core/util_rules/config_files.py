@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
@@ -179,8 +179,10 @@ class GatherPrioritizedConfigFilesByDirectoriesRequest:
     tool_name: str
     candidate_conf_filenames: tuple[str, ...]
     filepaths: tuple[str, ...]
-    content_marker_by_filename: FrozenDict[str, bytes] = FrozenDict()
-    orphan_filepath_behavior: OrphanFilepathConfigBehavior = OrphanFilepathConfigBehavior.ERROR
+    content_marker_by_filename: FrozenDict[str, bytes] = field(default_factory=FrozenDict)
+    orphan_filepath_behavior: OrphanFilepathConfigBehavior = field(
+        default=OrphanFilepathConfigBehavior.ERROR
+    )
 
 
 @rule
