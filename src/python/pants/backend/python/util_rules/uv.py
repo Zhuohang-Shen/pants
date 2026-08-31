@@ -312,6 +312,8 @@ async def create_venv_repository_from_uv_lockfile(
         f"""\
         cache_root="$({realpath_binary.path} {shlex.quote(VenvRepository.cache_dir)})"
         project_env="${{cache_root}}/{venv_path_suffix}"
+        random_suffix=${{RANDOM}}_${{RANDOM}}
+        project_env_tmp="${{project_env}}.${{random_suffix}}"
         lock_path="${{project_env}}.lock"
         {mkdir_binary.path} -p "$({dirname_binary.path} "${{lock_path}}")"
         (
@@ -325,7 +327,7 @@ async def create_venv_repository_from_uv_lockfile(
                  "[system-binaries].system_binary_paths." >&2
             exit 1
           fi
-          UV_PROJECT_ENVIRONMENT="${{project_env}}" {uv_cmd}
+          UV_PROJECT_ENVIRONMENT="${{project_env_tmp}}" {uv_cmd} && mv ${{project_env_tmp}} ${{project_env}}
         ) 200>"${{lock_path}}" || exit $?
         """
     )
